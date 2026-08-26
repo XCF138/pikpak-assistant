@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.4
+// @version      1.25.2
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.4';
+  const SCRIPT_VERSION = '1.25.2';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -3878,22 +3878,10 @@
     a.className = 'pp-quick-entry-a';
     a.href = 'javascript:void(0)';
     a.title = '打开 / 收起 PIKPAK 助手';
-    const ico = document.createElement('span');
-    ico.className = 'pp-quick-entry-ico';
-    const img = document.createElement('img');
-    img.alt = '';
-    // favicon 加载失败时回退到内置 SVG（保证一定有图标）
-    img.addEventListener('error', function() {
-      ico.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff" aria-hidden="true">' +
-        '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.5 3.6L12 11.5 5.5 7.9 12 4.3zM5 9.6l6 3.3v6.6l-6-3.3V9.6zm14 0v6.6l-6 3.3v-6.6l6-3.3z"/></svg>';
-    });
-    try { img.src = getPikpakIconUrl(); } catch (e) { img.src = 'about:blank'; }
-    ico.appendChild(img);
-    a.appendChild(ico);
-    const txt = document.createElement('span');
-    txt.className = 'pp-quick-entry-txt';
-    txt.textContent = 'PIKPAK';
-    a.appendChild(txt);
+    const iconUrl = getPikpakIconUrl().replace(/"/g, '&quot;');
+    a.innerHTML =
+      '<span class="pp-quick-entry-ico"><img src="' + iconUrl + '" alt="" /></span>' +
+      '<span class="pp-quick-entry-txt">PIKPAK</span>';
     a.addEventListener('click', function(e) {
       e.preventDefault();
       if (!ui.panel) return;
@@ -3903,17 +3891,12 @@
     return a;
   }
 
-  // 按纯文字匹配元素（可穿透 open shadow DOM）
+  // 按纯文字匹配元素（用于定位「已加星标」等官方项）
   function findElementByText(root, text) {
     if (!root) return null;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
     while (walker.nextNode()) {
-      const node = walker.currentNode;
-      if (node.textContent.trim() === text) return node;
-      if (node.shadowRoot) {
-        const found = findElementByText(node.shadowRoot, text);
-        if (found) return found;
-      }
+      if (walker.currentNode.textContent.trim() === text) return walker.currentNode;
     }
     return null;
   }
@@ -3923,35 +3906,16 @@
     let nav = document.querySelector('.wp-s-aside-nav__main-top');
     if (nav) return nav;
 
-    // 2. 按文字找到官方项，再向上找包含最多官方项的共同祖先
-    const labels = ['全部文件', '最近保存', '回收站', '我的分享', '播放历史', '已加星标', '云下载'];
-    const anchors = [];
+    // 2. 按文字找到任意官方项，再向上找列表容器
+    const labels = ['全部文件', '最近保存', '回收站', '我的分享', '播放历史', '已加星标'];
     for (const label of labels) {
       const el = findElementByText(document.body, label);
-      if (el) anchors.push(el);
-    }
-    if (anchors.length >= 2) {
-      let best = null;
-      let bestScore = 0;
-      let bestDepth = 0;
-      const root = anchors[0].getRootNode();
-      let p = anchors[0];
-      let depth = 0;
-      while (p && p !== root && p !== document.body) {
-        let count = 0;
-        for (const label of labels) {
-          if (findElementByText(p, label)) count++;
-        }
-        if (count > bestScore || (count === bestScore && depth > bestDepth)) {
-          bestScore = count;
-          bestDepth = depth;
-          best = p;
-        }
-        // 继续向上：普通 DOM 用 parentElement；shadow root 里用 parentNode.host
-        p = p.parentElement || (p.parentNode && p.parentNode.host) || null;
-        depth++;
+      if (!el) continue;
+      let p = el;
+      while (p && p !== document.body) {
+        if (p.children.length >= 2) return p;
+        p = p.parentElement;
       }
-      if (best) return best;
     }
 
     // 3. 兜底选择器
@@ -3962,28 +3926,11 @@
   }
 
   function injectSidebarEntry() {
-    if (document.getElementById('pikpak-assistant-entry')) {
-      // 侧边栏入口已存在：移除固定兜底入口，避免重复
-      const fb = document.getElementById('pikpak-assistant-entry-fallback');
-      if (fb) fb.remove();
-      return true;
-    }
-    let nav = findSidebarContainer();
+    if (document.getElementById('pikpak-assistant-entry')) return true;
+    const nav = findSidebarContainer();
     if (!nav) {
       console.log('[PIKPAK助手] 未找到侧边栏容器');
       return false;
-    }
-
-    // 如果 nav 是 shadow host，实际要注入到 shadow root 里
-    if (nav.shadowRoot) nav = nav.shadowRoot;
-
-    // 如果注入目标是 shadow root 或位于 shadow root 内，需要把入口样式也塞进 shadow root
-    const root = nav.getRootNode ? nav.getRootNode() : document;
-    if (root && root !== document && !root.getElementById('pikpak-assistant-entry-style')) {
-      const style = document.createElement('style');
-      style.id = 'pikpak-assistant-entry-style';
-      style.textContent = PP_QUICK_CSS;
-      root.appendChild(style);
     }
 
     const wrap = document.createElement('div');
@@ -3995,7 +3942,7 @@
     const starEl = findElementByText(nav, '已加星标');
     if (starEl) {
       let item = starEl;
-      while (item && item.parentElement !== nav && item.parentNode !== nav) item = item.parentElement;
+      while (item && item.parentElement !== nav) item = item.parentElement;
       if (item && item.nextSibling) nav.insertBefore(wrap, item.nextSibling);
       else nav.appendChild(wrap);
     } else {
@@ -4003,40 +3950,18 @@
     }
 
     console.log('[PIKPAK助手] 入口已注入到侧边栏', nav.tagName, nav.className);
-    // 侧边栏入口成功，移除固定兜底入口（避免重复）
-    const fb = document.getElementById('pikpak-assistant-entry-fallback');
-    if (fb) fb.remove();
     return true;
   }
 
-  // 兜底：侧边栏实在找不到时，在屏幕最左侧贴一个固定入口（仅作后备，避免脚本完全无法打开）
-  function injectFixedLeftFallback() {
-    if (document.getElementById('pikpak-assistant-entry')
-      || document.getElementById('pikpak-assistant-entry-fallback')) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'pikpak-assistant-entry-fallback';
-    wrap.className = 'pp-quick-entry pp-quick-fallback-left';
-    wrap.style.cssText = 'position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:9999;writing-mode:horizontal-tb;';
-    const a = buildEntryContent();
-    a.style.cssText = 'border-radius:0 8px 8px 0;box-shadow:2px 0 8px rgba(0,0,0,.15);';
-    wrap.appendChild(a);
-    document.body.appendChild(wrap);
-    console.log('[PIKPAK助手] 使用左侧固定兜底入口');
-  }
-
   function startSidebarInjection() {
-    // 先尝试注入到侧边栏；同时立即放置一个左侧固定兜底入口，
-    // 保证无论侧边栏能否注入（例如被 Shadow DOM 隔离），用户都能打开助手。
-    injectSidebarEntry();
-    injectFixedLeftFallback();
+    if (injectSidebarEntry()) return;
 
     let tries = 0;
     const timer = setInterval(function() {
-      if (injectSidebarEntry()) { clearInterval(timer); return; }
-      if (++tries >= 100) clearInterval(timer);
+      if (injectSidebarEntry() || ++tries >= 100) clearInterval(timer);
     }, 200);
 
-    // 同时用 MutationObserver 监听动态渲染的侧边栏，一旦可注入就升级为侧边栏入口
+    // 同时用 MutationObserver 监听动态渲染的侧边栏
     try {
       const obs = new MutationObserver(function() {
         if (injectSidebarEntry()) {
