@@ -36,6 +36,10 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.23.1（2026-08-26）
+
+- **给油猴脚本列表添加图标**：在元数据块中新增 `@icon` / `@iconURL`，指向 PikPak 官方 favicon (`https://mypikpak.com/favicon.ico`)，Tampermonkey 脚本管理界面会显示该图标。
+
 ### v1.23.0（2026-08-26）
 
 - **左侧入口改成蓝色背景胶囊**，白色文字，hover 加深，更醒目。
