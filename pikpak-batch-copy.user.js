@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.18.0
+// @version      1.19.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.18.0';
+  const SCRIPT_VERSION = '1.19.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -115,40 +115,43 @@
   let pkCapturedCaptcha = null; // 从网页 drive API 请求头中捕获的 captcha token
 
   /* ================================================================
-   * 注入 PikPak 左侧官方侧边栏的入口样式（不能用 Shadow DOM 隔离）
-   * 完全仿照参考脚本「网盘文件批量重命名」的 enter-component 风格：
-   * 蓝色图标 + 蓝色文字，58px 宽，垂直居中，与官方项完全并排
+   * 注入 PikPak 左侧入口的样式（不能用 Shadow DOM 隔离）
+   * 形态：官方侧边栏项的模式 —— 左边一个小图标，右边是字（水平排列）
    * ================================================================ */
   const PP_QUICK_CSS = `
-    .pp-quick-entry { padding-top: 2px; margin-bottom: 1px; }
+    /* 入口容器：在官方侧边栏里时占满整行 */
+    .pp-quick-entry { width: 100%; box-sizing: border-box; }
     .pp-quick-entry-btn {
-      width: 58px; color: #3b82f6; cursor: pointer;
-      display: inline-flex; flex-direction: column; align-items: center;
-      position: relative; font-size: 11px; min-height: 60px;
+      display: inline-flex; align-items: center; gap: 10px;
+      width: 100%; min-height: 40px; padding: 8px 12px;
+      color: #2c3e50; cursor: pointer;
       border-radius: 8px; background-color: transparent; border: none;
-      padding: 2px 0; margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font: 500 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      text-align: left; transition: background-color .15s;
     }
     .pp-quick-entry-btn:hover { background-color: #f1f3f8; }
     .pp-quick-entry-btn:active { background-color: #e6e9f2; }
+    /* 左边的小图标（蓝色） */
     .pp-quick-entry-ico {
-      display: flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px; border-radius: 8px; margin-top: 4px;
+      flex: none; display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 7px;
       background: linear-gradient(135deg, #3b6bff, #2f54eb);
-      color: #fff; font-size: 18px; font-weight: 700; line-height: 1;
-      box-shadow: 0 2px 6px rgba(47, 84, 235, .35);
+      color: #fff; font-size: 15px; font-weight: 700; line-height: 1;
+      box-shadow: 0 2px 5px rgba(47, 84, 235, .35);
     }
+    /* 图标后面的文字 */
     .pp-quick-entry-txt {
-      display: block; max-width: 80px; margin-top: 4px;
-      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       font-weight: 600;
     }
-    /* 极端降级：固定屏幕最左侧 */
+
+    /* 降级：屏幕最左侧固定（侧边栏未渲染时的兜底，立即出现） */
     .pp-quick-fallback-left {
       position: fixed; left: 8px; top: 50%; transform: translateY(-50%);
-      z-index: 999998; background: #fff; border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 4px 0;
+      z-index: 999998; width: auto; background: #fff; border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 0;
     }
+    .pp-quick-fallback-left .pp-quick-entry-btn { width: auto; }
   `;
 
   // Hook 网页的 fetch，捕获 PikPak 自己生成的 captcha init 请求模板和当前使用的 captcha token
@@ -3575,68 +3578,97 @@
   }
 
   /* ================================================================
-   * PikPak 助手入口：注入到 PikPak 左侧官方侧边栏
-   * 完全参考脚本「网盘文件批量重命名」的做法：
-   *   - 目标容器 .wp-s-aside-nav__main-top（与官方项完全并排）
-   *   - 蓝色图标 + 蓝色文字，58px 宽，垂直居中
-   *   - 轮询等待侧边栏渲染，注入一次后停止
-   * 右下角不再有任何浮动图标
+   * PikPak 助手入口（左侧）
+   * 形态：官方侧边栏项的模式 —— 左边一个小图标，右边是字（水平排列）
+   * 位置优先级：
+   *   1) 注入到 PikPak 官方左侧侧边栏容器 .wp-s-aside-nav__main-top（与官方项完全并排）
+   *   2) 若侧边栏尚未渲染，立即在屏幕最左侧显示一个固定入口（不再干等）
+   * 关键修复：
+   *   - 用唯一 id（pikpak-assistant-entry），避免与旧版脚本的 pp-quick-entries-wrap 冲突
+   *   - 初始化时清除旧版可能残留的右下角 FAB（类名 .pp-quick-fab）
    * ================================================================ */
-  function startSidebarInjection() {
-    let tries = 0;
-    const MAX = 40; // 最多等约 12 秒
-    const timer = setInterval(function() {
-      tries++;
-      const sidebar = document.querySelector('.wp-s-aside-nav__main-top')
-        || document.querySelector('[class*="wp-s-aside-nav"]');
-
-      if (!sidebar) {
-        if (tries >= MAX) {
-          clearInterval(timer);
-          // 侧边栏始终未出现：降级为屏幕最左侧固定入口（非右下角）
-          injectFallbackLeft();
-        }
-        return;
-      }
-
-      clearInterval(timer);
-      if (document.getElementById('pp-quick-entries-wrap')) return;
-
-      const wrap = document.createElement('div');
-      wrap.id = 'pp-quick-entries-wrap';
-      wrap.className = 'pp-quick-entry';
-      wrap.innerHTML =
-        '<button type="button" class="pp-quick-entry-btn" title="打开 PIKPAK 助手">' +
-          '<span class="pp-quick-entry-ico">P</span>' +
-          '<span class="pp-quick-entry-txt">PIKPAK</span>' +
-        '</button>';
-      sidebar.appendChild(wrap);
-
-      wrap.querySelector('.pp-quick-entry-btn').addEventListener('click', function() {
-        if (!ui.panel) return;
-        if (ui.panel.classList.contains('hidden')) openPanel();
-        else closePanel();
-      });
-    }, 300);
-  }
-
-  // 极端降级：侧边栏始终没渲染出来时，固定在屏幕最左侧
-  function injectFallbackLeft() {
-    if (document.getElementById('pp-quick-entries-wrap')) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'pp-quick-entries-wrap';
-    wrap.className = 'pp-quick-entry pp-quick-fallback-left';
-    wrap.innerHTML =
-      '<button type="button" class="pp-quick-entry-btn" title="打开 PIKPAK 助手">' +
-        '<span class="pp-quick-entry-ico">P</span>' +
-        '<span class="pp-quick-entry-txt">PIKPAK</span>' +
-      '</button>';
-    document.body.appendChild(wrap);
-    wrap.querySelector('.pp-quick-entry-btn').addEventListener('click', function() {
+  function buildEntryButton() {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pp-quick-entry-btn';
+    btn.title = '打开 / 收起 PIKPAK 助手';
+    btn.innerHTML =
+      '<span class="pp-quick-entry-ico">P</span>' +
+      '<span class="pp-quick-entry-txt">PIKPAK助手</span>';
+    btn.addEventListener('click', function() {
       if (!ui.panel) return;
       if (ui.panel.classList.contains('hidden')) openPanel();
       else closePanel();
     });
+    return btn;
+  }
+
+  function getSidebar() {
+    return document.querySelector('.wp-s-aside-nav__main-top')
+      || document.querySelector('[class*="wp-s-aside-nav"]')
+      || document.querySelector('[class*="aside-nav"]')
+      || document.querySelector('nav[class*="sidebar"]');
+  }
+
+  // 把入口放进官方侧边栏；若已在侧边栏则不动，若在降级位置则移入
+  function upgradeToSidebar() {
+    const existing = document.getElementById('pikpak-assistant-entry');
+    const sidebar = getSidebar();
+    if (!sidebar) return false;
+    if (existing) {
+      if (existing.parentNode === sidebar) return true;
+      existing.classList.remove('pp-quick-fallback-left');
+      sidebar.appendChild(existing); // 从屏幕左侧移到官方侧边栏
+      return true;
+    }
+    const wrap = document.createElement('div');
+    wrap.id = 'pikpak-assistant-entry';
+    wrap.className = 'pp-quick-entry';
+    wrap.appendChild(buildEntryButton());
+    sidebar.appendChild(wrap);
+    return true;
+  }
+
+  // 立即在屏幕最左侧显示一个固定入口（保证秒出，不干等侧边栏）
+  function showFallbackLeft() {
+    if (document.getElementById('pikpak-assistant-entry')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'pikpak-assistant-entry';
+    wrap.className = 'pp-quick-entry pp-quick-fallback-left';
+    wrap.appendChild(buildEntryButton());
+    document.body.appendChild(wrap);
+  }
+
+  function startSidebarInjection() {
+    // 1) 先尝试放进官方侧边栏；放不进就立刻在左侧显示固定入口
+    if (!upgradeToSidebar()) showFallbackLeft();
+
+    // 2) 持续轮询，等官方侧边栏渲染出来后把入口移进去（最多 ~12s）
+    let tries = 0;
+    const timer = setInterval(function() {
+      if (upgradeToSidebar() || ++tries >= 60) clearInterval(timer);
+    }, 200);
+  }
+
+  // 清除旧版脚本残留的右下角 FAB（类名 .pp-quick-fab / 旧 id pp-quick-entries-wrap）
+  function cleanupOldFab() {
+    document.querySelectorAll('.pp-quick-fab, #pp-quick-entries-wrap, .pp-quick-in-sidebar, .pp-quick-floating-left')
+      .forEach(function(el) { el.remove(); });
+    // 旧脚本可能在之后才注入，用观察者兜底清除一段时间
+    try {
+      const obs = new MutationObserver(function(muts) {
+        muts.forEach(function(m) {
+          m.addedNodes.forEach(function(n) {
+            if (n.nodeType === 1 && (n.classList && n.classList.contains('pp-quick-fab')
+              || (n.id && n.id === 'pp-quick-entries-wrap'))) {
+              n.remove();
+            }
+          });
+        });
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      setTimeout(function() { obs.disconnect(); }, 15000);
+    } catch (e) {}
   }
 
   /* ================================================================
@@ -3823,7 +3855,8 @@
     initPanelGestures();
     renderChips();
 
-    // 注入"快捷入口"到 PikPak 官方侧边栏下方（仿照官方"图标+文字"垂直风格）
+    // 先清除旧版脚本残留的右下角 FAB，再把入口注入到左侧
+    cleanupOldFab();
     startSidebarInjection();
 
     // 启动后延迟 3 秒自动检查脚本更新（避开页面加载卡顿）
