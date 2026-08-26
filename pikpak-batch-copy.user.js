@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.9
+// @version      1.26.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.9';
+  const SCRIPT_VERSION = '1.26.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -2575,28 +2575,28 @@
       panel.innerHTML = '<div class="pp-dup-empty">' + (state.dupScanning ? '正在扫描…' : '未发现重复文件（按所选算法+阈值+类型在当前范围内未匹配到）') + '</div>';
       return;
     }
-    // 搜索过滤：按文件名关键字过滤组
+    // 搜索过滤：按文件名关键字过滤组（保留原始索引 gi，不重排，保证勾选状态能正确映射回 state.dupGroups）
     const kw = (state.dupFilter || '').trim().toLowerCase();
-    let shown = groups;
-    if (kw) {
-      shown = groups.filter(function(g) {
-        return g.items.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
-      });
-    }
+    const shown = [];
+    groups.forEach(function(g, gi) {
+      if (kw && !g.items.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; })) return;
+      shown.push({ g: g, gi: gi });
+    });
     if (shown.length === 0) {
       panel.innerHTML = '<div class="pp-dup-empty">没有匹配「' + esc(state.dupFilter) + '」的重复组</div>';
       return;
     }
-    let totalFiles = 0;
-    for (const g of groups) totalFiles += g.items.length;
-    let html = '<div class="pp-dup-summary" style="padding:6px 14px 10px;font-size:12px;color:#86909c;">找到 <b style="color:#2f54eb;">' + shown.length + '</b> 组重复文件（共 ' + totalFiles + ' 个文件）' +
-      (kw ? '，当前筛选出 <b>' + shown.length + '</b> 组' : '') +
-      '。勾选要删除的文件，未勾选的会被保留。</div>';
-    shown.forEach(function(g, gi) {
+    let shownFiles = 0;
+    for (const s of shown) shownFiles += s.g.items.length;
+    let html = '<div class="pp-dup-summary" style="padding:6px 14px 10px;font-size:12px;color:#86909c;">找到 <b style="color:#2f54eb;">' + shown.length + '</b> 组重复文件（共 ' + shownFiles + ' 个文件）' +
+      (kw ? '（已按关键字筛选）' : '') +
+      '。请手动勾选要删除的文件，未勾选的会被保留。</div>';
+    shown.forEach(function(s) {
+      const g = s.g;
+      const gi = s.gi;
       const groupTotalSize = g.items.reduce(function(sum, f) { return sum + (Number(f.size) || 0); }, 0);
       const base = g.items[0];
-      // 默认保留每组时间最新的一个（fi===0），其余默认勾选删除
-      const allChecked = g.items.slice(1).every(function(f) { return f._dupChecked !== false; });
+      const allChecked = g.items.length > 1 && g.items.slice(1).every(function(f) { return f._dupChecked; });
       html += '<div class="pp-dup-group" data-gi="' + gi + '">' +
         '<div class="pp-dup-group-head" data-gi="' + gi + '">' +
         '<input type="checkbox" data-gi="' + gi + '" data-group-check="1"' + (allChecked ? ' checked' : '') + '>' +
@@ -2607,7 +2607,7 @@
         '</div>' +
         '<div class="pp-dup-group-items">';
       g.items.forEach(function(f, fi) {
-        const checked = fi === 0 ? false : (f._dupChecked !== false);
+        const checked = !!f._dupChecked;
         const thumbEmoji = /^image\//.test(f.mime || '') ? '🖼' : (/^video\//.test(f.mime || '') ? '🎬' : '📄');
         const thumbHtml = f.thumbnail
           ? '<img src="' + esc(f.thumbnail) + '" alt="" data-fallback="' + thumbEmoji + '" loading="lazy">'
@@ -2756,6 +2756,13 @@
       state.dupGroups = null;
       ui.dupNote.textContent = '查重失败：' + (e.message || String(e));
     }
+    // 初始化勾选状态：默认不勾选，由用户手动选择要删除的文件
+    // （避免 undefined 被渲染成「已勾选」、但删除逻辑却当「未勾选」的显示/实际不一致问题）
+    if (state.dupGroups) {
+      state.dupGroups.forEach(function(g) {
+        g.items.forEach(function(f) { f._dupChecked = false; });
+      });
+    }
     state.dupScanning = false;
     // 扫描完退出选目录模式，回到结果展示
     if (state.dupFolderMode) {
@@ -2770,7 +2777,7 @@
     } else if (state.dupGroups) {
       let total = 0; for (const g of state.dupGroups) total += g.items.length;
       ui.dupNote.textContent = (useTargets ? '已扫 ' + targets.length + ' 个勾选文件夹：' : '') +
-        '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件）。默认保留每组最新一个，其余已勾选删除；可手动调整。';
+        '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件）。默认未勾选，请手动勾选要删除的文件（点组头可快速选整组，或用「全选可删除项」）。';
     }
   }
 
