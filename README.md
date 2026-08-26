@@ -36,6 +36,11 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.26.2（2026-08-27）
+- **修复**：查重「缩略图相似」几乎不生效。根因：原实现用 canvas 计算感知哈希(aHash) 需要在 `<canvas>` 读取缩略图像素，但 PikPak 缩略图多为跨域 CDN 且无 CORS 头，导致 canvas 被污染、`getImageData` 抛错、哈希恒为 null，分组永远为空。
+  - 去掉 `img.crossOrigin` 设置，并在 `groupByThumbnail` 增加「相同缩略图 URL」兜底分组：跨域无法读像素时，按缩略图 URL 相同判定为同一图（至少兜住内容哈希缺失的精确重复）。
+  - aHash 近相似仅在同源/CDN 允许跨域读像素时生效；UI 文案同步说明该取舍。
+
 ### v1.26.1（2026-08-27）
 - **修复**：查重结果中单个文件 checkbox 无法单独勾选。根因是文件行 `<div>` 也带 `data-fi` 属性，`bindDupResultEvents` 用 `[data-fi]` 选择器时把 div 也绑上了 change 监听器，div 的 `checked` 为 undefined，覆盖/干扰了 input 的勾选状态。已限定选择器为 `input[type="checkbox"][data-fi]`。
 

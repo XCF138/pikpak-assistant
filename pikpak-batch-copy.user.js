@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.26.1
+// @version      1.26.2
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.26.1';
+  const SCRIPT_VERSION = '1.26.2';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -1401,7 +1401,7 @@
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
-              <label class="pp-rn-check" title="对图片/视频封面计算感知哈希并比较；文件多时较慢，且依赖缩略图可跨域加载"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
+              <label class="pp-rn-check" title="缩略图近似查重：优先用感知哈希(aHash)找「看着像」的图/视频封面；若缩略图跨域无法读像素，则退化为「相同缩略图」精确匹配。文件多时较慢"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
             </div>
           </div>
           <div class="pp-dup-action-row">
@@ -2272,7 +2272,9 @@
   function loadImageForHash(url) {
     return new Promise(function(resolve) {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // 不设 crossOrigin：同源/带 CORS 的缩略图可直接读像素；
+      // 跨域且无 CORS 时图片仍能加载，但 canvas 会被污染，getImageData 抛错，
+      // 由 computeAverageHash 捕获后退回「相同缩略图 URL」分组兜底。
       img.onload = function() { resolve(img); };
       img.onerror = function() { resolve(null); };
       img.src = url;
@@ -2335,30 +2337,51 @@
     return out;
   }
 
-  // 按缩略图 aHash 距离分组（默认按 strictness 取阈值：loose=10, normal=8, strict=5）
+  // 按缩略图分组：先用 aHash 做「近相似」检测（依赖 canvas 可读像素）；
+  // 若缩略图跨域且无 CORS（canvas 被污染，aHash 算不出），再退化为「相同缩略图 URL」分组，
+  // 至少能兜住内容哈希缺失的精确重复图片。
   async function groupByThumbnail(candidates, strictness, assigned, statusFn) {
     const threshold = strictness === 'loose' ? 10 : (strictness === 'strict' ? 5 : 8);
     const pool = candidates.filter(function(x) {
       return !assigned.has(x.id) && x.thumbnail && (/^image\//.test(x.mime) || /^video\//.test(x.mime));
     });
-    const withHash = await computeThumbHashes(pool, 6, statusFn);
     const groups = [];
+
+    // 1) aHash 近相似分组（仅在同源/CDN 允许跨域读取像素时有效）
+    const withHash = await computeThumbHashes(pool, 6, statusFn);
+    const hashAssigned = new Set();
     for (let i = 0; i < withHash.length; i++) {
-      if (assigned.has(withHash[i].id)) continue;
+      if (hashAssigned.has(withHash[i].id)) continue;
       const group = [withHash[i]];
-      assigned.add(withHash[i].id);
+      hashAssigned.add(withHash[i].id);
       for (let j = i + 1; j < withHash.length; j++) {
-        if (assigned.has(withHash[j].id)) continue;
+        if (hashAssigned.has(withHash[j].id)) continue;
         if (hammingDistance(withHash[i]._thumbHash, withHash[j]._thumbHash) <= threshold) {
           group.push(withHash[j]);
-          assigned.add(withHash[j].id);
+          hashAssigned.add(withHash[j].id);
         }
       }
       if (group.length > 1) {
         const sorted = group.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+        sorted.forEach(x => assigned.add(x.id));
         groups.push({ type: 'thumb', label: '缩略图相似', items: sorted });
       }
     }
+
+    // 2) 兜底：相同缩略图 URL 视为同一图片（不依赖 CORS，跨域也能跑；只补充尚未分组的精确重复）
+    const byUrl = new Map();
+    for (const x of pool) {
+      if (assigned.has(x.id) || !x.thumbnail) continue;
+      if (!byUrl.has(x.thumbnail)) byUrl.set(x.thumbnail, []);
+      byUrl.get(x.thumbnail).push(x);
+    }
+    for (const list of byUrl.values()) {
+      if (list.length < 2) continue;
+      const sorted = list.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+      sorted.forEach(x => assigned.add(x.id));
+      groups.push({ type: 'thumb', label: '缩略图相同', items: sorted });
+    }
+
     return groups;
   }
 
