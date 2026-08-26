@@ -36,6 +36,9 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.26.1（2026-08-27）
+- **修复**：查重结果中单个文件 checkbox 无法单独勾选。根因是文件行 `<div>` 也带 `data-fi` 属性，`bindDupResultEvents` 用 `[data-fi]` 选择器时把 div 也绑上了 change 监听器，div 的 `checked` 为 undefined，覆盖/干扰了 input 的勾选状态。已限定选择器为 `input[type="checkbox"][data-fi]`。
+
 ### v1.26.0（2026-08-27）
 
 - **修复查重勾选两大 bug**：
