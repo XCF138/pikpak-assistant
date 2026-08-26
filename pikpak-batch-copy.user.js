@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         PikPak 批量复制助手
+// @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.13.0
-// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
+// @version      1.14.0
+// @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
 // @supportURL   https://github.com/XCF138/pikpak-assistant/issues
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.13.0';
+  const SCRIPT_VERSION = '1.14.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -115,65 +115,51 @@
   let pkCapturedCaptcha = null; // 从网页 drive API 请求头中捕获的 captcha token
 
   /* ================================================================
-   * 注入 PikPak 侧边栏快捷入口的全局样式（不能用 Shadow DOM 隔离）
-   * 仿照 PikPak 官方侧边栏"图标 + 文字"垂直风格
+   * 注入 PikPak 页面 FAB 按钮的全局样式（不能用 Shadow DOM 隔离）
+   * 仿照 PikPak 官方"➕ PikPak 助手"蓝色 pill 按钮
    * ================================================================ */
   const PP_QUICK_CSS = `
+    .pp-quick-fab {
+      position: fixed; right: 24px; bottom: 24px; z-index: 2147483646;
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 0 22px 0 14px; height: 44px;
+      background: linear-gradient(135deg, #3b6bff, #2f54eb);
+      color: #fff; border: none; border-radius: 999px;
+      font: 600 15px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      box-shadow: 0 6px 20px rgba(47, 84, 235, .45);
+      cursor: pointer; user-select: none;
+      transition: transform .15s, box-shadow .15s;
+    }
+    .pp-quick-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(47, 84, 235, .55); }
+    .pp-quick-fab:active { transform: translateY(0); }
+    .pp-quick-fab-ico {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 6px;
+      background: rgba(255, 255, 255, .22);
+      font-size: 18px; font-weight: 700; line-height: 1;
+    }
+    .pp-quick-fab-txt { letter-spacing: .5px; }
+
+    /* 降级浮动模式（找不到合适位置时浮在屏幕左侧） */
     .pp-quick-wrap {
-      width: 200px;
-      padding: 8px 4px 12px;
+      width: 200px; padding: 8px 4px 12px;
       border-top: 1px solid rgba(0,0,0,.06);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 14px;
-      color: #2c3e50;
-      box-sizing: border-box;
+      font-size: 14px; color: #2c3e50; box-sizing: border-box;
     }
-    .pp-quick-title {
-      padding: 6px 14px 4px;
-      font-size: 11px;
-      font-weight: 600;
-      color: #94a3b8;
-      letter-spacing: .5px;
-      text-transform: uppercase;
-    }
+    .pp-quick-title { padding: 6px 14px 4px; font-size: 11px; font-weight: 600; color: #94a3b8; letter-spacing: .5px; text-transform: uppercase; }
     .pp-quick-item {
-      display: flex; align-items: center; gap: 12px;
-      width: 100%; padding: 9px 14px;
-      background: transparent; border: none; cursor: pointer;
-      text-align: left; color: inherit;
-      border-radius: 8px;
-      transition: background .15s, color .15s;
-      position: relative;
+      display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px;
+      background: transparent; border: none; cursor: pointer; text-align: left; color: inherit;
+      border-radius: 8px; transition: background .15s, color .15s; position: relative;
       font-family: inherit; font-size: 14px;
     }
     .pp-quick-item:hover { background: rgba(59,107,255,.08); color: #2f54eb; }
-    .pp-quick-item.pp-quick-active {
-      background: linear-gradient(90deg, rgba(59,107,255,.16), rgba(59,107,255,.04));
-      color: #2f54eb; font-weight: 600;
-    }
-    .pp-quick-item.pp-quick-active::before {
-      content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
-      width: 3px; background: #2f54eb; border-radius: 0 2px 2px 0;
-    }
-    .pp-quick-icon {
-      flex: none; width: 22px; font-size: 18px; text-align: center; line-height: 1;
-    }
+    .pp-quick-item.pp-quick-active { background: linear-gradient(90deg, rgba(59,107,255,.16), rgba(59,107,255,.04)); color: #2f54eb; font-weight: 600; }
+    .pp-quick-item.pp-quick-active::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; background: #2f54eb; border-radius: 0 2px 2px 0; }
+    .pp-quick-icon { flex: none; width: 22px; font-size: 18px; text-align: center; line-height: 1; }
     .pp-quick-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pp-quick-tip { display: none; }
-    .pp-quick-item:hover .pp-quick-tip {
-      display: block; position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
-      margin-left: 6px; padding: 4px 10px; background: #1f2937; color: #fff;
-      font-size: 12px; white-space: nowrap; border-radius: 6px; z-index: 9999;
-      box-shadow: 0 4px 12px rgba(0,0,0,.18);
-    }
-    /* 降级浮动模式：固定在屏幕左侧 */
-    .pp-quick-floating {
-      position: fixed; left: 12px; top: 50%; transform: translateY(-50%);
-      width: 180px; padding: 10px 4px;
-      background: #fff; border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0,0,0,.12);
-      z-index: 999998;
-    }
+    .pp-quick-floating { position: fixed; left: 12px; top: 50%; transform: translateY(-50%); width: 180px; padding: 10px 4px; background: #fff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 999998; }
     .pp-quick-floating .pp-quick-title { color: #2f54eb; }
     .pp-quick-floating .pp-quick-item { font-size: 13px; padding: 8px 12px; }
   `;
@@ -1070,13 +1056,13 @@
         <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6a1.5 1.5 0 0 1 1.1.5l.9 1h4.4A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12V4.5Z" fill="#fff" opacity=".4"/>
         <path d="M5.5 9h5M8.5 11.5v-5" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>
       </svg>
-      <span>PikPak 助手</span>
+      <span>PIKPAK助手</span>
     </div>
 
     <div class="pp-panel hidden" id="pp-panel">
       <div class="pp-header" id="pp-header" title="按住此处拖动窗口；双击复位位置">
         <div class="pp-title-row">
-          <span class="pp-title">⠿ PikPak 工作台</span>
+          <span class="pp-title">⠿ PIKPAK助手</span>
           <span class="pp-update-hint hidden" id="pp-update-hint" title="点击查看更新"></span>
           <span class="pp-header-btns">
             <button class="pp-mini-btn" id="pp-checkupdate" title="检查脚本更新">🔄 检查更新</button>
@@ -3616,55 +3602,22 @@
   function injectQuickEntries() {
     // 重复注入保护
     if (document.getElementById('pp-quick-entries')) return;
-    // 寻找 PikPak 官方侧边栏（多个常见选择器兼容）
-    const selectors = [
-      '[class*="sidebar"]', '[class*="Sidebar"]',
-      'aside', 'nav.sidebar', '.pk-sidebar',
-      '[class*="pk-side"]', 'div[class*="Navigation"]',
-    ];
-    let anchor = null;
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el) { anchor = el; break; }
-    }
-    // 找不到合适的官方侧边栏：降级为浮窗 FAB 上方的小型入口条
-    if (!anchor || !anchor.parentNode) {
-      // 退路：把入口条插入到 body 左侧，固定定位
-      return injectFloatingEntries();
-    }
 
-    // 创建 PikPak 助手侧边栏
-    const wrap = document.createElement('div');
-    wrap.id = 'pp-quick-entries';
-    wrap.className = 'pp-quick-wrap';
-    wrap.innerHTML =
-      '<div class="pp-quick-title">PikPak 助手</div>' +
-      PP_QUICK_ENTRIES.map(function(e, i) {
-        return '<button type="button" class="pp-quick-item" data-panel="' + e.panel + '">' +
-          '<span class="pp-quick-icon">' + e.icon + '</span>' +
-          '<span class="pp-quick-label">' + e.label + '</span>' +
-          '<span class="pp-quick-tip">' + e.desc + '</span>' +
-        '</button>';
-      }).join('');
+    // 创建单个 FAB 按钮：蓝色 pill 形，仿 PikPak 官方"➕ PikPak 助手"风格
+    const btn = document.createElement('button');
+    btn.id = 'pp-quick-entries';
+    btn.type = 'button';
+    btn.className = 'pp-quick-fab';
+    btn.title = '打开 PikPak 助手（批量复制 / 查重 / 重命名 / 目录树）';
+    btn.innerHTML =
+      '<span class="pp-quick-fab-ico">+</span>' +
+      '<span class="pp-quick-fab-txt">PikPak 助手</span>';
 
-    // 注入到官方侧边栏同级（紧跟其后），但样式独立
-    anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
-
-    // 绑定点击：展开悬浮窗 + 切到对应 tab
-    wrap.querySelectorAll('.pp-quick-item').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        if (ui.panel && ui.panel.classList.contains('hidden')) {
-          openPanel();
-        }
-        // 切 tab
-        if (ui.shadowRoot) {
-          switchPanelMode(btn.dataset.panel);
-        }
-        // 高亮
-        wrap.querySelectorAll('.pp-quick-item').forEach(function(b) {
-          b.classList.toggle('pp-quick-active', b === btn);
-        });
-      });
+    document.body.appendChild(btn);
+    btn.addEventListener('click', function() {
+      if (!ui.panel) return;
+      if (ui.panel.classList.contains('hidden')) openPanel();
+      else closePanel();
     });
   }
 
