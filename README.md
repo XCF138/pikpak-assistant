@@ -36,6 +36,11 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.22.1（2026-08-26）
+
+- **彻底杜绝「白卡片」**：给左侧入口的 `.pp-quick-entry / .pp-quick-entry-a / .pp-quick-entry-ico` 强制 `background-color: transparent !important; border:none !important; box-shadow:none !important;`，用 `!important` 压过 PikPak 页面可能给侧边栏子元素套上的任何背景/边框/阴影，确保入口永远与官方项一样透明融合。hover/active 的高亮也同步用 `!important` 保留。
+- 同时确认右键里不再有任何会渲染成白卡片的老代码（`.pp-fab` 浮动球、`.pp-quick-fallback-left` 等均已在 1.20–1.22 移除）。
+
 ### v1.22.0（2026-08-26）
 
 - **左侧入口彻底改成参考脚本同款逻辑**：直接 append 一个普通 `<div>` 到官方侧边栏容器 `.wp-s-aside-nav__main-top` 底部；删掉会留下白底卡片的「左侧固定兜底」方案，入口只应该出现在侧边栏里，透明背景、44px 行高、与官方项完全并排。

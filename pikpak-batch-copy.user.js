@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.22.0
+// @version      1.22.1
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.22.0';
+  const SCRIPT_VERSION = '1.22.1';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -119,22 +119,29 @@
    * 与官方侧边栏项完全并排：透明背景、左边图标、右边文字
    * ================================================================ */
   const PP_QUICK_CSS = `
+    /* 强制透明：用 !important 压过 PikPak 页面可能给侧边栏子元素设置的所有背景/边框/阴影，
+       避免被渲染成「白卡片」。hover/active 同样用 !important 以保证交互仍生效。 */
+    .pp-quick-entry, .pp-quick-entry-a, .pp-quick-entry-ico {
+      background-color: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
     .pp-quick-entry { width: 100%; box-sizing: border-box; }
     .pp-quick-entry-a {
       display: flex; align-items: center; gap: 12px;
       width: 100%; height: 44px; padding: 0 16px;
       color: #4e5969; text-decoration: none; cursor: pointer;
-      border-radius: 8px; background-color: transparent;
+      border-radius: 8px;
       font: 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
       transition: background-color .15s;
     }
-    .pp-quick-entry-a:hover { background-color: #f5f6fa; }
-    .pp-quick-entry-a:active { background-color: #eff1f5; }
+    .pp-quick-entry-a:hover { background-color: #f5f6fa !important; }
+    .pp-quick-entry-a:active { background-color: #eff1f5 !important; }
     /* 左边的小图标：透明背景、与官方图标对齐 */
     .pp-quick-entry-ico {
       flex: none; width: 20px; height: 20px;
       display: flex; align-items: center; justify-content: center;
-      color: #3b6bff; background-color: transparent;
+      color: #3b6bff;
       font-size: 17px; font-weight: 700; line-height: 1;
     }
     /* 图标后面的文字 */
