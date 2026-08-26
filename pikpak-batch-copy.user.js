@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.8.1
+// @version      1.8.2
 // @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压、文件查重去重）；③ 导出文件夹目录树（TXT / PNG 图片）；④ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       WorkBuddy
 // @match        https://mypikpak.com/*
@@ -1337,18 +1337,12 @@
     let html = '';
     const isMove = state.copyMode === 'move';
     for (const f of folders.slice(0, MAX_LIST_ITEMS)) {
-      const checked = isMove && state.files.some((x) => x.id === f.id);
-      if (isMove) {
-        html += '<div class="pp-row folder' + (checked ? ' picked' : '') + '" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '" data-kind="folder">' +
-          '<span class="pp-pick" data-pick="1">✓</span>' +
-          '<span class="ico">📁</span>' +
-          '<span class="name" data-enter="1" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
-          '<span class="arrow" data-enter="1">›</span></div>';
-      } else {
-        html += '<div class="pp-row folder" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '">' +
-          '<span class="ico">📁</span><span class="name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
-          '<span class="arrow">›</span></div>';
-      }
+      const checked = state.files.some((x) => x.id === f.id);
+      html += '<div class="pp-row folder' + (checked ? ' picked' : '') + '" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '" data-kind="folder">' +
+        '<span class="pp-pick" data-pick="1">✓</span>' +
+        '<span class="ico">📁</span>' +
+        '<span class="name" data-enter="1" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+        '<span class="arrow" data-enter="1">›</span></div>';
     }
     for (const f of files.slice(0, MAX_LIST_ITEMS)) {
       const checked = state.files.some((x) => x.id === f.id);
@@ -2396,29 +2390,30 @@
     ui.list1.addEventListener('click', (e) => {
       const row = e.target.closest('.pp-row');
       if (!row) return;
-      const isMove = state.copyMode === 'move';
       const isPick = e.target.closest('[data-pick]');
       const isEnter = e.target.closest('[data-enter]');
-      if (row.classList.contains('folder')) {
-        if (isMove && isPick) {
-          // 移动模式：点勾选块 → 勾选文件夹（可勾选也可进入）
-          const id = row.dataset.id;
-          const idx = state.files.findIndex((x) => x.id === id);
-          if (idx >= 0) state.files.splice(idx, 1);
-          else state.files.push({ id: id, name: row.dataset.name, isFolder: true });
-          renderStep1List();
-        } else if (!isMove || isEnter) {
-          // 复制模式：点击文件夹整体进入；移动模式：点击名称进入
-          enterFolder(state.browse1, { id: row.dataset.id, name: row.dataset.name }, renderStep1List);
-        }
-      } else if (row.classList.contains('file')) {
+      const isFolder = row.classList.contains('folder');
+      if (isPick) {
+        // 点勾选块：勾选/取消（文件夹、文件都支持）
         const id = row.dataset.id;
         const idx = state.files.findIndex((x) => x.id === id);
         if (idx >= 0) {
           state.files.splice(idx, 1);
         } else {
-          state.files.push({ id: id, name: row.dataset.name, isFolder: false });
+          state.files.push({ id: id, name: row.dataset.name, isFolder: isFolder });
         }
+        renderStep1List();
+        return;
+      }
+      if (isFolder) {
+        // 点文件夹名称/箭头 → 进入子文件夹（无论复制/移动模式）
+        enterFolder(state.browse1, { id: row.dataset.id, name: row.dataset.name }, renderStep1List);
+      } else {
+        // 文件行非勾选区域 → 整行勾选切换
+        const id = row.dataset.id;
+        const idx = state.files.findIndex((x) => x.id === id);
+        if (idx >= 0) state.files.splice(idx, 1);
+        else state.files.push({ id: id, name: row.dataset.name, isFolder: false });
         renderStep1List();
       }
     });
