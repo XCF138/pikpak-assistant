@@ -36,6 +36,13 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.25.9（2026-08-26）
+
+- **优化查重设置区排版**：把「算法」勾选、「结果操作按钮」、「文件类型 / 相似阈值 / 递归扫描」三层视觉分离，避免挤在同一行导致的错位/换行凌乱。
+  - 算法独占一行，勾选框自然换行；操作按钮（全选可删除项 / 反选 / 移到回收站）放在算法行下方单独一行并右对齐，与勾选区域对齐。
+  - 文件类型、相似阈值、递归扫描子文件夹放在同一行，递归标签禁止换行，避免之前被挤成多段的字样。
+  - 新增 `.pp-dup-rules` / `.pp-dup-algo-row` / `.pp-dup-action-row` / `.pp-dup-filter-row` 等样式类，取消操作按钮在结果操作区的 `margin-top`，整体更紧凑整齐。
+
 ### v1.25.8（2026-08-26）
 
 - **修复入口/图标整段不显示的根因（关键）**：v1.25.2 把查重操作按钮移到算法行时，在 `updateDupActionState()` 和 `bindEvents()` 里直接调用了 `shadowRoot.getElementById(...)`，但 `shadowRoot` 只是 `init()` 内部的局部 `const`，这两个函数访问不到它，于是运行到 `bindEvents()` 时抛 `shadowRoot is not defined`，导致 `init()` 后续代码（含左侧入口注入 `startSidebarInjection`）整体中断不执行——这正是 v1.25.2 之后入口/图标消失的真凶。已统一改为 `ui.shadowRoot.getElementById(...)`（与 `$()` 助手一致）。v1.25.1 没有这段代码所以正常。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.8
+// @version      1.25.9
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.8';
+  const SCRIPT_VERSION = '1.25.9';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -1050,6 +1050,18 @@
     .pp-dup-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: #a9aeb8; }
     .pp-dup-actions { display: flex; gap: 8px; align-items: center; }
 
+    /* ---- 文件查重：设置卡片排版 ---- */
+    .pp-dup-rules { gap: 10px; }
+    .pp-dup-algo-row { align-items: center; }
+    .pp-dup-algo-row > label { width: auto; flex: none; color: #86909c; }
+    .pp-dup-algo-list { display: flex; flex-wrap: wrap; gap: 12px 14px; flex: 1; }
+    .pp-dup-action-row { display: flex; justify-content: flex-end; padding-left: 32px; }
+    .pp-dup-action-row .pp-btn-sm { margin-top: 0; }
+    .pp-dup-filter-row { align-items: center; gap: 8px; }
+    .pp-dup-filter-row > label { width: auto; flex: none; color: #86909c; }
+    .pp-dup-filter-row > select { flex: 0 1 auto; min-width: 90px; }
+    .pp-dup-recursive-check { margin-left: auto; white-space: nowrap; }
+
     .pp-progress { margin-top: 6px; }
     .pp-progress-track { height: 8px; background: #e6edfb; border-radius: 4px; overflow: hidden; }
     .pp-progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #3b6bff, #2f54eb);
@@ -1382,35 +1394,37 @@
           <button class="pp-tbar-btn" id="pp-dup-checked-clear" style="margin-left:auto;">清空</button>
         </div>
         <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
-        <div class="pp-rn-rules" style="border-radius:8px;margin-top:6px;">
-          <div class="pp-rn-rule-row" style="gap:14px;align-items:flex-start;">
-            <label style="width:auto;flex:none;padding-top:2px;">算法</label>
-            <div style="display:flex;flex-wrap:wrap;gap:14px;flex:1;">
+        <div class="pp-rn-rules pp-dup-rules" style="border-radius:8px;margin-top:6px;">
+          <div class="pp-rn-rule-row pp-dup-algo-row">
+            <label>算法</label>
+            <div class="pp-dup-algo-list">
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
               <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
               <label class="pp-rn-check" title="对图片/视频封面计算感知哈希并比较；文件多时较慢，且依赖缩略图可跨域加载"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
             </div>
-            <span class="pp-dup-actions" id="pp-dup-actions" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+          </div>
+          <div class="pp-dup-action-row">
+            <span class="pp-dup-actions" id="pp-dup-actions">
               <button class="pp-btn pp-btn-sm" id="pp-dup-select-all-del">全选可删除项</button>
               <button class="pp-btn pp-btn-sm" id="pp-dup-invert">反选</button>
               <button class="pp-btn pp-btn-primary pp-btn-sm" id="pp-dup-clean">🗑 将勾选项移到回收站</button>
             </span>
           </div>
-          <div class="pp-rn-rule-row">
-            <label style="width:auto;flex:none;">文件类型</label>
+          <div class="pp-rn-rule-row pp-dup-filter-row">
+            <label>文件类型</label>
             <select id="pp-dup-filetype" title="只扫描指定类型的文件">
               <option value="all">全部文件</option>
               <option value="video">仅视频</option>
               <option value="image">仅图片</option>
             </select>
-            <label style="margin-left:14px;">相似阈值</label>
+            <label>相似阈值</label>
             <select id="pp-dup-strict">
               <option value="loose">宽松（推荐，召回高）</option>
               <option value="normal">标准</option>
               <option value="strict">严格（仅高度相似）</option>
             </select>
-            <label class="pp-rn-check" style="margin-left:auto;"><input type="checkbox" id="pp-dup-recursive" checked> 递归扫描子文件夹</label>
+            <label class="pp-rn-check pp-dup-recursive-check"><input type="checkbox" id="pp-dup-recursive" checked> 递归扫描子文件夹</label>
           </div>
         </div>
         <div class="pp-footer">
