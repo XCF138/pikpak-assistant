@@ -36,6 +36,11 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.25.8（2026-08-26）
+
+- **修复入口/图标整段不显示的根因（关键）**：v1.25.2 把查重操作按钮移到算法行时，在 `updateDupActionState()` 和 `bindEvents()` 里直接调用了 `shadowRoot.getElementById(...)`，但 `shadowRoot` 只是 `init()` 内部的局部 `const`，这两个函数访问不到它，于是运行到 `bindEvents()` 时抛 `shadowRoot is not defined`，导致 `init()` 后续代码（含左侧入口注入 `startSidebarInjection`）整体中断不执行——这正是 v1.25.2 之后入口/图标消失的真凶。已统一改为 `ui.shadowRoot.getElementById(...)`（与 `$()` 助手一致）。v1.25.1 没有这段代码所以正常。
+- 仍以用户确认正常的 **v1.25.1** 为基线 + v1.25.5 的按钮右侧布局 + 图标兜底，`@version` 升到 1.25.8。
+
 ### v1.25.7（2026-08-26）
 
 - **修复左侧入口图标空白（改用 v1.25.1 已验证写法）**：v1.25.6 把 `buildEntryContent()` 改成 `createElement('img')` + `error` 监听器的写法，在你的环境里图标不显示（仅 v1.25.1 的 favicon 写法正常）。现改回 v1.25.1 的写法——favicon 直接写进 `innerHTML`（你环境里能正常显示），再额外用 JS 绑定 `error` 事件做 SVG 兜底（加载失败才回退），并补判 `img.complete && naturalWidth===0` 以防 error 在监听器绑定前已同步触发。

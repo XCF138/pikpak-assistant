@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.7
+// @version      1.25.8
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.7';
+  const SCRIPT_VERSION = '1.25.8';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -2620,9 +2620,9 @@
   function updateDupActionState() {
     const groups = state.dupGroups || [];
     const disabled = !(groups && groups.length > 0);
-    const clean = shadowRoot.getElementById('pp-dup-clean');
-    const selAll = shadowRoot.getElementById('pp-dup-select-all-del');
-    const invert = shadowRoot.getElementById('pp-dup-invert');
+    const clean = ui.shadowRoot.getElementById('pp-dup-clean');
+    const selAll = ui.shadowRoot.getElementById('pp-dup-select-all-del');
+    const invert = ui.shadowRoot.getElementById('pp-dup-invert');
     if (clean) clean.disabled = disabled;
     if (selAll) selAll.disabled = disabled;
     if (invert) invert.disabled = disabled;
@@ -3323,9 +3323,9 @@
     ui.dupScan.addEventListener('click', executeDupScan);
 
     // 查重结果操作按钮（常驻于算法行最右侧，不随结果滚动）
-    const dupClean = shadowRoot.getElementById('pp-dup-clean');
-    const dupSelAll = shadowRoot.getElementById('pp-dup-select-all-del');
-    const dupInvert = shadowRoot.getElementById('pp-dup-invert');
+    const dupClean = ui.shadowRoot.getElementById('pp-dup-clean');
+    const dupSelAll = ui.shadowRoot.getElementById('pp-dup-select-all-del');
+    const dupInvert = ui.shadowRoot.getElementById('pp-dup-invert');
     if (dupClean) dupClean.addEventListener('click', executeDupClean);
     if (dupSelAll) dupSelAll.addEventListener('click', function() {
       (state.dupGroups || []).forEach(function(g) {
