@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.8.0
+// @version      1.8.1
 // @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压、文件查重去重）；③ 导出文件夹目录树（TXT / PNG 图片）；④ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       WorkBuddy
 // @match        https://mypikpak.com/*
@@ -1352,10 +1352,10 @@
     }
     for (const f of files.slice(0, MAX_LIST_ITEMS)) {
       const checked = state.files.some((x) => x.id === f.id);
-      html += '<div class="pp-row file' + (checked ? ' checked' : '') + '" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '">' +
+      html += '<div class="pp-row file' + (checked ? ' picked' : '') + '" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '">' +
+        '<span class="pp-pick" data-pick="1">✓</span>' +
         '<span class="ico">📄</span><span class="name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
-        '<span class="meta">' + fmtTime(f.modified_time) + ' · ' + fmtSize(f.size) + '</span>' +
-        '<span class="badge">✓</span></div>';
+        '<span class="meta">' + fmtTime(f.modified_time) + ' · ' + fmtSize(f.size) + '</span></div>';
     }
     if (total > MAX_LIST_ITEMS) {
       html += '<div class="pp-hint">仅显示前 ' + MAX_LIST_ITEMS + ' 项（共 ' + total + ' 项），可用上方筛选缩小范围</div>';
