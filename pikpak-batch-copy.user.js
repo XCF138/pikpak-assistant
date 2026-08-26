@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.23.1
+// @version      1.24.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.23.1';
+  const SCRIPT_VERSION = '1.24.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -106,6 +106,18 @@
     if (isNaN(d.getTime())) return '';
     const p = (x) => String(x).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  // 秒数 → 时:分:秒 / 分:秒
+  function fmtDuration(sec) {
+    sec = Number(sec) || 0;
+    if (sec <= 0) return '';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    const p = (x) => String(x).padStart(2, '0');
+    if (h > 0) return h + ':' + p(m) + ':' + p(s);
+    return m + ':' + p(s);
   }
 
   /* ================================================================
@@ -757,6 +769,13 @@
       transition: all .15s;
     }
     .pp-mini-btn:hover { background: #fff; color: #2f54eb; border-color: #fff; }
+    .pp-version {
+      display: inline-flex; align-items: center; align-self: center;
+      padding: 2px 8px; font-size: 12px; font-weight: 600; line-height: 1;
+      color: rgba(255,255,255,.92); background: rgba(255,255,255,.16);
+      border: 1px solid rgba(255,255,255,.42); border-radius: 7px;
+      white-space: nowrap; user-select: none;
+    }
     .pp-sub { font-size: 12px; color: rgba(255,255,255,.78); margin-top: 4px; }
     .pp-author { font-size: 11px; }
     .pp-author a { color: rgba(255,255,255,.9); text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,.45); }
@@ -981,6 +1000,53 @@
     .pp-sum-item { padding: 3px 10px; font-size: 12.5px; color: #1d2129;
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pp-sum-item i { font-style: normal; color: #a9aeb8; }
+
+    /* ---- 文件查重：分组卡片结果 ---- */
+    .pp-dup-result { flex: 1; overflow-y: auto; background: #fff; border: 1px solid #e1e9f7; border-radius: 12px;
+                     box-shadow: 0 1px 5px rgba(30, 64, 160, .06); padding: 8px 0; }
+    .pp-dup-result::-webkit-scrollbar { width: 8px; }
+    .pp-dup-result::-webkit-scrollbar-thumb { background: #dfe3ec; border-radius: 4px; }
+    .pp-dup-group { margin-bottom: 10px; }
+    .pp-dup-group:last-child { margin-bottom: 0; }
+    .pp-dup-group-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; margin: 0 8px;
+      background: #f2f5fb; border-radius: 8px;
+      font-size: 12px; color: #4e5969; cursor: pointer; user-select: none;
+    }
+    .pp-dup-group-head:hover { background: #e8edf7; }
+    .pp-dup-group-head input[type="checkbox"] { accent-color: #2f54eb; width: 16px; height: 16px; flex: none; cursor: pointer; }
+    .pp-dup-group-count { flex: none; font-weight: 600; color: #2f54eb; }
+    .pp-dup-group-size { flex: none; color: #86909c; }
+    .pp-dup-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1d2129; font-weight: 500; }
+    .pp-dup-group-items { padding: 2px 8px 6px; }
+    .pp-dup-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px; margin: 0 8px;
+      border-radius: 8px; font-size: 12px; color: #1d2129;
+      transition: background .12s;
+    }
+    .pp-dup-row:hover { background: #f7f9ff; }
+    .pp-dup-row input[type="checkbox"] { accent-color: #2f54eb; width: 16px; height: 16px; flex: none; cursor: pointer; }
+    .pp-dup-thumb {
+      flex: none; width: 32px; height: 32px; border-radius: 6px;
+      object-fit: cover; background: #eef3ff;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden; color: #86909c; font-size: 18px;
+    }
+    .pp-dup-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .pp-dup-name { flex: 1.2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pp-dup-path { flex: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #86909c; }
+    .pp-dup-meta { flex: none; width: 78px; text-align: right; color: #4e5969; }
+    .pp-dup-meta.wide { width: 90px; }
+    .pp-dup-row.to-del { opacity: .85; }
+    .pp-dup-row.to-keep { background: #f0faf2; }
+    .pp-dup-row.to-keep:hover { background: #e6f7e8; }
+    .pp-dup-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: #a9aeb8; }
+    .pp-dup-actions {
+      display: flex; gap: 8px; justify-content: flex-end; padding: 8px 10px 0;
+    }
+
     .pp-progress { margin-top: 6px; }
     .pp-progress-track { height: 8px; background: #e6edfb; border-radius: 4px; overflow: hidden; }
     .pp-progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #3b6bff, #2f54eb);
@@ -1024,6 +1090,7 @@
           <span class="pp-update-hint hidden" id="pp-update-hint" title="点击查看更新"></span>
           <span class="pp-header-btns">
             <button class="pp-mini-btn" id="pp-checkupdate" title="检查脚本更新">🔄 检查更新</button>
+            <span class="pp-version" id="pp-version">v1.24.0</span>
             <button class="pp-mini-btn" id="pp-fullscreen" title="全屏 / 窗口切换">⛶ 全屏</button>
             <button class="pp-mini-btn" id="pp-reset" title="清空所有选择">重置</button>
             <button class="pp-mini-btn" id="pp-close" title="收起面板">×</button>
@@ -1320,7 +1387,13 @@
             <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
           </div>
           <div class="pp-rn-rule-row">
-            <label>相似阈值</label>
+            <label style="width:auto;flex:none;">文件类型</label>
+            <select id="pp-dup-filetype" title="只扫描指定类型的文件">
+              <option value="all">全部文件</option>
+              <option value="video">仅视频</option>
+              <option value="image">仅图片</option>
+            </select>
+            <label style="margin-left:14px;">相似阈值</label>
             <select id="pp-dup-strict">
               <option value="loose">宽松（推荐，召回高）</option>
               <option value="normal">标准</option>
@@ -1375,6 +1448,7 @@
     dupGroups: null,           // 查重结果：[{type, label, items: [...]}] 每组为重复项
     dupScanning: false,
     dupFilter: '',             // 查重结果搜索关键字
+    dupFileType: 'all',        // 查重文件类型：all | video | image
     dupStopRequested: false,   // 递归扫描时是否请求停止
     dupFolderMode: false,      // 是否处于"勾选子文件夹"浏览模式
     dupCheckedFolders: [],     // 已勾选的子文件夹 [{id, name, path}]
@@ -2145,7 +2219,7 @@
   }
 
   // 查重：套用增强大师三种算法（精准匹配 + 视频时长相似 + 名称相似）
-  // algoOpts: { hash, sim, name, strict, recursive, maxDepth, maxItems }
+  // algoOpts: { hash, sim, name, strict, recursive, maxDepth, maxItems, fileType }
   function pathOfDupStack(stack) {
     if (!stack || stack.length === 0) return '';
     return stack.map(function(s) { return s.name; }).join('/');
@@ -2178,6 +2252,7 @@
   function renderDupFolderList() {
     if (!state.dupFolderMode) return;
     const b = state.dupBrowse;
+    ui.dupPanel.className = 'pp-list';
     renderBreadcrumb(ui.bcDup, b);
     if (b.loading) {
       ui.dupPanel.innerHTML = '<div class="pp-hint">加载中…</div>';
@@ -2220,6 +2295,7 @@
     const isRecursive = algoOpts.recursive !== false;
     const maxDepth = algoOpts.maxDepth || 4;
     const maxItems = algoOpts.maxItems || 3000;
+    const fileType = algoOpts.fileType || 'all';
     const sizeRatioLimit = strictness === 'loose' ? 0.15 : (strictness === 'strict' ? 0.03 : 0.08);
     const durThreshold = strictness === 'loose' ? 5.0 : (strictness === 'strict' ? 1.5 : 3.0);
 
@@ -2239,7 +2315,13 @@
       const rootId = rootStack[rootStack.length - 1].id;
       await collectDupItems(rootId, '', 0, maxDepth, allItems, isRecursive, function() {}, maxItems);
     }
-    const candidates = allItems.filter(function(x) { return !x.isFolder; });
+    let candidates = allItems.filter(function(x) { return !x.isFolder; });
+    // 按文件类型过滤
+    if (fileType === 'video') {
+      candidates = candidates.filter(function(x) { return /^video\//.test(x.mime || ''); });
+    } else if (fileType === 'image') {
+      candidates = candidates.filter(function(x) { return /^image\//.test(x.mime || ''); });
+    }
     if (candidates.length > maxItems) {
       candidates.length = maxItems; // 防御性截断
     }
@@ -2341,8 +2423,9 @@
   function renderDupGroups() {
     const panel = ui.dupPanel;
     const groups = state.dupGroups || [];
+    panel.className = 'pp-dup-result';
     if (!groups || groups.length === 0) {
-      panel.innerHTML = '<div class="pp-hint">' + (state.dupScanning ? '正在扫描…' : '未发现重复文件（按所选算法+阈值在当前范围内未匹配到）') + '</div>';
+      panel.innerHTML = '<div class="pp-dup-empty">' + (state.dupScanning ? '正在扫描…' : '未发现重复文件（按所选算法+阈值+类型在当前范围内未匹配到）') + '</div>';
       return;
     }
     // 搜索过滤：按文件名关键字过滤组
@@ -2354,33 +2437,101 @@
       });
     }
     if (shown.length === 0) {
-      panel.innerHTML = '<div class="pp-hint">没有匹配「' + esc(state.dupFilter) + '」的重复组</div>';
+      panel.innerHTML = '<div class="pp-dup-empty">没有匹配「' + esc(state.dupFilter) + '」的重复组</div>';
       return;
     }
     let totalFiles = 0;
     for (const g of groups) totalFiles += g.items.length;
-    let html = '<div class="pp-hint" style="padding:8px;">找到 <b>' + groups.length + '</b> 组重复文件（共 ' + totalFiles + ' 个文件）' +
+    let html = '<div class="pp-dup-summary" style="padding:6px 14px 10px;font-size:12px;color:#86909c;">找到 <b style="color:#2f54eb;">' + shown.length + '</b> 组重复文件（共 ' + totalFiles + ' 个文件）' +
       (kw ? '，当前筛选出 <b>' + shown.length + '</b> 组' : '') +
-      '。每组仅保留时间最新的一个，其余移到回收站。</div>';
+      '。勾选要删除的文件，未勾选的会被保留。</div>';
     shown.forEach(function(g, gi) {
+      const groupTotalSize = g.items.reduce(function(sum, f) { return sum + (Number(f.size) || 0); }, 0);
       const base = g.items[0];
-      html += '<div class="pp-sum-head">重复组 ' + (gi + 1) + '：' + esc(base.name) + '（' + esc(g.label) + ' · ' + fmtSize(base.size) + '，共 ' + g.items.length + ' 个）</div>';
+      // 默认保留每组时间最新的一个（fi===0），其余默认勾选删除
+      const allChecked = g.items.slice(1).every(function(f) { return f._dupChecked !== false; });
+      html += '<div class="pp-dup-group" data-gi="' + gi + '">' +
+        '<div class="pp-dup-group-head" data-gi="' + gi + '">' +
+        '<input type="checkbox" data-gi="' + gi + '" data-group-check="1"' + (allChecked ? ' checked' : '') + '>' +
+        '<span class="pp-dup-group-count">' + g.items.length + ' 项</span>' +
+        '<span class="pp-dup-group-size">| ' + fmtSize(groupTotalSize) + '</span>' +
+        '<span class="pp-dup-group-name" title="' + esc(base.name) + '">' + esc(base.name) + '</span>' +
+        '<span style="color:#a9aeb8;flex:none;">' + esc(g.label) + '</span>' +
+        '</div>' +
+        '<div class="pp-dup-group-items">';
       g.items.forEach(function(f, fi) {
-        const keep = fi === 0;
-        const pathText = f.parentPath ? '📁 ' + esc(f.parentPath) + ' · ' : '';
-        html += '<div class="pp-rn-pv-row' + (keep ? ' skip' : '') + '">' +
-          '<span class="pp-rn-pv-state">' + (keep ? '⭐' : '') + '</span>' +
-          '<span class="pp-rn-pv-old" title="' + esc(f.name) + '">' + pathText + esc(f.name) + '</span>' +
-          '<span class="pp-rn-pv-new">' + (keep ? '保留' : '→ 回收站') + '</span>' +
+        const checked = fi === 0 ? false : (f._dupChecked !== false);
+        const thumb = /^image\//.test(f.mime || '') ? '🖼' : (/^video\//.test(f.mime || '') ? '🎬' : '📄');
+        const path = f.parentPath || '';
+        html += '<div class="pp-dup-row ' + (checked ? 'to-del' : 'to-keep') + '" data-gi="' + gi + '" data-fi="' + fi + '">' +
+          '<input type="checkbox" data-gi="' + gi + '" data-fi="' + fi + '"' + (checked ? ' checked' : '') + '>' +
+          '<span class="pp-dup-thumb">' + thumb + '</span>' +
+          '<span class="pp-dup-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+          '<span class="pp-dup-path" title="' + esc(path) + '">' + (path ? esc(path) : '—') + '</span>' +
+          '<span class="pp-dup-meta">' + fmtSize(f.size) + '</span>' +
+          '<span class="pp-dup-meta wide">' + (fmtDuration(f.duration) || '—') + '</span>' +
+          '<span class="pp-dup-meta wide">' + (fmtTime(f.time) || '—') + '</span>' +
           '</div>';
       });
+      html += '</div></div>';
     });
-    html += '<div class="pp-footer" style="margin-top:6px;">' +
-      '<button class="pp-btn pp-btn-primary" id="pp-dup-clean">🗑 将重复项（保留组内第一个）移到回收站</button>' +
+    html += '<div class="pp-dup-actions">' +
+      '<button class="pp-btn" id="pp-dup-select-all-del">全选可删除项</button>' +
+      '<button class="pp-btn" id="pp-dup-invert">反选</button>' +
+      '<button class="pp-btn pp-btn-primary" id="pp-dup-clean">🗑 将勾选项移到回收站</button>' +
       '</div>';
     panel.innerHTML = html;
-    const cleanBtn = ui.shadowRoot.getElementById('pp-dup-clean');
+    bindDupResultEvents();
+  }
+
+  function bindDupResultEvents() {
+    const panel = ui.dupPanel;
+    if (!panel) return;
+    // 组头 checkbox：控制全组
+    panel.querySelectorAll('[data-group-check]').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const gi = Number(cb.dataset.gi);
+        const g = state.dupGroups[gi];
+        if (!g) return;
+        g.items.forEach(function(f, fi) {
+          if (fi === 0) return; // 保留项不动
+          f._dupChecked = cb.checked;
+        });
+        renderDupGroups();
+      });
+    });
+    // 单个 checkbox
+    panel.querySelectorAll('[data-fi]').forEach(function(cb) {
+      if (cb.dataset.groupCheck) return;
+      cb.addEventListener('change', function() {
+        const gi = Number(cb.dataset.gi);
+        const fi = Number(cb.dataset.fi);
+        const g = state.dupGroups[gi];
+        if (!g || !g.items[fi]) return;
+        g.items[fi]._dupChecked = cb.checked;
+        renderDupGroups();
+      });
+    });
+    // 按钮
+    const cleanBtn = panel.querySelector('#pp-dup-clean');
+    const selAllBtn = panel.querySelector('#pp-dup-select-all-del');
+    const invertBtn = panel.querySelector('#pp-dup-invert');
     if (cleanBtn) cleanBtn.addEventListener('click', executeDupClean);
+    if (selAllBtn) selAllBtn.addEventListener('click', function() {
+      (state.dupGroups || []).forEach(function(g) {
+        g.items.forEach(function(f, fi) {
+          if (fi === 0) f._dupChecked = false;
+          else f._dupChecked = true;
+        });
+      });
+      renderDupGroups();
+    });
+    if (invertBtn) invertBtn.addEventListener('click', function() {
+      (state.dupGroups || []).forEach(function(g) {
+        g.items.forEach(function(f) { f._dupChecked = !f._dupChecked; });
+      });
+      renderDupGroups();
+    });
   }
 
   async function executeDupClean() {
@@ -2392,10 +2543,15 @@
     }) : groups;
     const toDelete = [];
     scope.forEach(function(g) {
-      for (let i = 1; i < g.items.length; i++) toDelete.push(g.items[i].id);
+      g.items.forEach(function(f) {
+        if (f._dupChecked) toDelete.push(f.id);
+      });
     });
-    if (toDelete.length === 0) return;
-    if (!window.confirm('确定要把 ' + toDelete.length + ' 个重复文件移到回收站吗？\n\n每组只保留时间最新的一个，其余全部移入回收站（可恢复）。')) return;
+    if (toDelete.length === 0) {
+      ui.dupNote.textContent = '没有勾选任何要删除的文件';
+      return;
+    }
+    if (!window.confirm('确定要把 ' + toDelete.length + ' 个勾选文件移到回收站吗？\n\n未勾选的文件会被保留（可恢复）。')) return;
 
     state.dupScanning = true;
     ui.dupNote.textContent = '正在清理重复文件…';
@@ -2428,19 +2584,22 @@
     const useSim = ui.dupAlgoSim ? ui.dupAlgoSim.checked : true;
     const useName = ui.dupAlgoName ? ui.dupAlgoName.checked : true;
     const strictness = ui.dupStrict ? ui.dupStrict.value : 'normal';
+    const fileType = ui.dupFileType ? ui.dupFileType.value : 'all';
     // 扫描目标：勾选模式 > 勾选的子文件夹；非勾选模式 > 当前文件夹（可递归）
     const useTargets = state.dupCheckedFolders.length > 0;
     const targets = useTargets ? state.dupCheckedFolders.slice() : null;
     ui.dupNote.textContent = useTargets
       ? ('正在扫描已选 ' + targets.length + ' 个文件夹…')
       : ('正在扫描' + (recursive ? '（含子文件夹）' : '当前文件夹') + '查重…');
-    ui.dupPanel.innerHTML = '<div class="pp-hint">正在扫描…</div>';
+    ui.dupPanel.className = 'pp-dup-result';
+    ui.dupPanel.innerHTML = '<div class="pp-dup-empty">正在扫描…</div>';
     await sleep(50); // 让 UI 先刷新
     try {
       state.dupGroups = await buildDupGroups({
         hash: useHash, sim: useSim, name: useName, strict: strictness,
         recursive: recursive,
         targets: targets,
+        fileType: fileType,
       });
     } catch (e) {
       state.dupGroups = null;
@@ -2460,7 +2619,7 @@
     } else if (state.dupGroups) {
       let total = 0; for (const g of state.dupGroups) total += g.items.length;
       ui.dupNote.textContent = (useTargets ? '已扫 ' + targets.length + ' 个勾选文件夹：' : '') +
-        '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件），可输入关键字筛选';
+        '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件）。默认保留每组最新一个，其余已勾选删除；可手动调整。';
     }
   }
 
@@ -2950,7 +3109,8 @@
         renderDupFolderList();
       } else {
         loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
-        ui.dupPanel.innerHTML = '<div class="pp-hint">面包屑已切换（不再勾选子文件夹扫描），点击「扫描查重」开始</div>';
+        ui.dupPanel.className = 'pp-dup-result';
+        ui.dupPanel.innerHTML = '<div class="pp-dup-empty">面包屑已切换（不再勾选子文件夹扫描），点击「扫描查重」开始</div>';
       }
     });
     // 搜索过滤重复组
@@ -2962,6 +3122,18 @@
         renderDupGroups();
       }
     });
+    // 文件类型筛选变更时，清空当前结果避免混淆
+    if (ui.dupFileType) {
+      ui.dupFileType.addEventListener('change', () => {
+        state.dupFileType = ui.dupFileType.value;
+        if (!state.dupFolderMode && state.dupGroups) {
+          state.dupGroups = null;
+          ui.dupPanel.className = 'pp-dup-result';
+          ui.dupPanel.innerHTML = '<div class="pp-dup-empty">文件类型已切换，请重新点击「扫描查重」</div>';
+          ui.dupNote.textContent = '文件类型已切换，请重新扫描';
+        }
+      });
+    }
     // 切换"勾选子文件夹"模式
     ui.dupFolderMode.addEventListener('click', () => {
       state.dupFolderMode = !state.dupFolderMode;
@@ -2973,7 +3145,8 @@
         loadBrowse(state.dupBrowse, renderDupFolderList);
         ui.dupNote.textContent = '在右侧浏览并勾选要扫的子文件夹（可多选），然后点「扫描查重」';
       } else {
-        ui.dupPanel.innerHTML = '<div class="pp-hint">点击「扫描查重」开始</div>';
+        ui.dupPanel.className = 'pp-dup-result';
+        ui.dupPanel.innerHTML = '<div class="pp-dup-empty">点击「扫描查重」开始</div>';
         ui.dupNote.textContent = '对当前文件夹执行文件查重；如需限定范围，点「📂 选目录」勾选子文件夹';
       }
     });
@@ -3824,6 +3997,7 @@
       fullscreen: shadowRoot.getElementById('pp-fullscreen'),
       updateHint: shadowRoot.getElementById('pp-update-hint'),
       checkUpdate: shadowRoot.getElementById('pp-checkupdate'),
+      versionLabel: shadowRoot.getElementById('pp-version'),
       dupBody: shadowRoot.getElementById('pp-dup-body'),
       bcDup: shadowRoot.getElementById('pp-bc-dup'),
       dupSearch: shadowRoot.getElementById('pp-search-dup'),
@@ -3834,6 +4008,7 @@
       dupAlgoSim: shadowRoot.getElementById('pp-dup-algo-sim'),
       dupAlgoName: shadowRoot.getElementById('pp-dup-algo-name'),
       dupStrict: shadowRoot.getElementById('pp-dup-strict'),
+      dupFileType: shadowRoot.getElementById('pp-dup-filetype'),
       dupRecursive: shadowRoot.getElementById('pp-dup-recursive'),
       dupFolderMode: shadowRoot.getElementById('pp-dup-foldermode'),
       dupCheckedChips: shadowRoot.getElementById('pp-dup-checked-chips'),
@@ -3846,6 +4021,9 @@
     applySavedGeom();
     initPanelGestures();
     renderChips();
+
+    // 标题栏版本号（始终与 SCRIPT_VERSION 保持一致）
+    if (ui.versionLabel) ui.versionLabel.textContent = 'v' + SCRIPT_VERSION;
 
     // 先清除旧版脚本残留的右下角 FAB，再把入口注入到左侧
     cleanupOldFab();
