@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.0
+// @version      1.25.1
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.0';
+  const SCRIPT_VERSION = '1.25.1';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -1035,6 +1035,11 @@
       overflow: hidden; color: #86909c; font-size: 18px;
     }
     .pp-dup-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .pp-dup-thumb i { font-style: normal; }
+    .pp-dup-thumb.fallback::before {
+      content: attr(data-fallback);
+      font-style: normal;
+    }
     .pp-dup-name { flex: 1.2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pp-dup-path { flex: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #86909c; }
     .pp-dup-meta { flex: none; width: 78px; text-align: right; color: #4e5969; }
@@ -1044,10 +1049,13 @@
     .pp-dup-row.to-keep:hover { background: #e6f7e8; }
     .pp-dup-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: #a9aeb8; }
     .pp-dup-actions {
-      position: sticky; bottom: 0; z-index: 10;
+      position: sticky; bottom: 0; left: 0; right: 0; z-index: 10;
+      width: 100%; box-sizing: border-box;
       display: flex; gap: 8px; justify-content: flex-end;
-      padding: 10px 12px; margin: 8px 0 0;
-      background: #fff; border-top: 1px solid #e1e9f7; border-radius: 0 0 11px 11px;
+      padding: 10px 14px; margin: 0;
+      background: rgba(255,255,255,.98); border-top: 1px solid #e1e9f7;
+      box-shadow: 0 -2px 10px rgba(30, 64, 160, .06);
+      border-radius: 0 0 11px 11px;
     }
 
     .pp-progress { margin-top: 6px; }
@@ -2166,11 +2174,23 @@
     }
     for (const fi of files) {
       const dur = parseFloat((fi.params && fi.params.duration) || 0);
-      const thumb = fi.thumbnail ||
-        (fi.thumbnail_link) ||
+      const p = fi.params || {};
+      const mi = fi.media_info || fi.mediainfo || {};
+      const thumb =
+        fi.thumbnail ||
+        fi.thumbnail_link ||
         (fi.image && fi.image.thumbnail_link) ||
+        (fi.image && fi.image.small_thumbnail_link) ||
         (fi.links && fi.links.thumbnail && fi.links.thumbnail.url) ||
-        (fi.icon_link) || '';
+        (fi.links && fi.links.icon && fi.links.icon.url) ||
+        (mi.thumbnail && mi.thumbnail.url) ||
+        (mi.thumbnail_url) ||
+        (mi.video_metadata && mi.video_metadata.thumbnail && mi.video_metadata.thumbnail.url) ||
+        p.thumbnail ||
+        p.thumbnail_url ||
+        p.thumbnail_link ||
+        p.icon_link ||
+        fi.icon_link || '';
       out.push({
         id: fi.id,
         name: fi.name,
@@ -2577,12 +2597,12 @@
         const checked = fi === 0 ? false : (f._dupChecked !== false);
         const thumbEmoji = /^image\//.test(f.mime || '') ? '🖼' : (/^video\//.test(f.mime || '') ? '🎬' : '📄');
         const thumbHtml = f.thumbnail
-          ? '<img src="' + esc(f.thumbnail) + '" crossorigin="anonymous" alt="" onerror="this.style.display=\'none\';this.parentNode.classList.add(\'fallback\');this.parentNode.textContent=\'' + thumbEmoji + '\';">'
-          : thumbEmoji;
+          ? '<img src="' + esc(f.thumbnail) + '" alt="" data-fallback="' + thumbEmoji + '" loading="lazy">'
+          : '<i>' + thumbEmoji + '</i>';
         const path = f.parentPath || '';
         html += '<div class="pp-dup-row ' + (checked ? 'to-del' : 'to-keep') + '" data-gi="' + gi + '" data-fi="' + fi + '">' +
           '<input type="checkbox" data-gi="' + gi + '" data-fi="' + fi + '"' + (checked ? ' checked' : '') + '>' +
-          '<span class="pp-dup-thumb' + (f.thumbnail ? '' : ' fallback') + '">' + thumbHtml + '</span>' +
+          '<span class="pp-dup-thumb' + (f.thumbnail ? '' : ' fallback') + '" data-fallback="' + thumbEmoji + '">' + thumbHtml + '</span>' +
           '<span class="pp-dup-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
           '<span class="pp-dup-path" title="' + esc(path) + '">' + (path ? esc(path) : '—') + '</span>' +
           '<span class="pp-dup-meta">' + fmtSize(f.size) + '</span>' +
@@ -2604,6 +2624,18 @@
   function bindDupResultEvents() {
     const panel = ui.dupPanel;
     if (!panel) return;
+    // 缩略图加载失败时回退为 emoji
+    panel.querySelectorAll('.pp-dup-thumb img').forEach(function(img) {
+      if (img.complete && img.naturalHeight === 0) {
+        const wrap = img.closest('.pp-dup-thumb');
+        if (wrap) { wrap.classList.add('fallback'); img.remove(); }
+      } else {
+        img.addEventListener('error', function() {
+          const wrap = img.closest('.pp-dup-thumb');
+          if (wrap) { wrap.classList.add('fallback'); img.remove(); }
+        });
+      }
+    });
     // 组头 checkbox：控制全组
     panel.querySelectorAll('[data-group-check]').forEach(function(cb) {
       cb.addEventListener('change', function() {

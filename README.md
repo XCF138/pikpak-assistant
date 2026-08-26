@@ -36,6 +36,13 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.25.1（2026-08-26）
+
+- **修复查重结果缩略图不显示**：之前渲染缩略图时给 `<img>` 加了 `crossorigin="anonymous"`，导致无 CORS 头的缩略图被浏览器拦截；已移除 display `<img>` 的 crossorigin，仅保留 canvas 哈希计算时的 crossorigin。
+- **扩大缩略图字段兼容**：`collectDupItems()` 现在尝试从 `thumbnail / thumbnail_link / image.thumbnail_link / image.small_thumbnail_link / links.thumbnail.url / links.icon.url / media_info.thumbnail.url / media_info.thumbnail_url / media_info.video_metadata.thumbnail.url / params.thumbnail / params.thumbnail_url / params.thumbnail_link / params.icon_link / icon_link` 等字段提取缩略图。
+- **优化查重操作条样式**：吸底条改为 `width:100%`、增加底部阴影、调整 padding/margin，避免内容遮挡、视觉更对齐。
+- 缩略图加载失败时通过 JS 监听 `error` 事件回退为文件类型 emoji。
+
 ### v1.25.0（2026-08-26）
 
 - **查重结果支持真实缩略图**：优先显示 PikPak 返回的文件/视频封面缩略图，加载失败或没有缩略图时回退到文件类型图标。
