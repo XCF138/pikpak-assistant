@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.24.0
+// @version      1.25.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.24.0';
+  const SCRIPT_VERSION = '1.25.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -1044,7 +1044,10 @@
     .pp-dup-row.to-keep:hover { background: #e6f7e8; }
     .pp-dup-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: #a9aeb8; }
     .pp-dup-actions {
-      display: flex; gap: 8px; justify-content: flex-end; padding: 8px 10px 0;
+      position: sticky; bottom: 0; z-index: 10;
+      display: flex; gap: 8px; justify-content: flex-end;
+      padding: 10px 12px; margin: 8px 0 0;
+      background: #fff; border-top: 1px solid #e1e9f7; border-radius: 0 0 11px 11px;
     }
 
     .pp-progress { margin-top: 6px; }
@@ -1385,6 +1388,7 @@
             <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
             <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
             <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
+            <label class="pp-rn-check" title="对图片/视频封面计算感知哈希并比较；文件多时较慢，且依赖缩略图可跨域加载"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
           </div>
           <div class="pp-rn-rule-row">
             <label style="width:auto;flex:none;">文件类型</label>
@@ -2146,7 +2150,7 @@
   }
 
   // 递归收集当前文件夹（及子文件夹）下所有文件，含子文件夹项
-  // 每项：{id, name, size, time, hash, mime, duration, parentPath, isFolder}
+  // 每项：{id, name, size, time, hash, mime, duration, parentPath, thumbnail, isFolder}
   async function collectDupItems(folderId, parentPath, depth, maxDepth, out, isRecursive, statusFn) {
     let data;
     try {
@@ -2162,6 +2166,11 @@
     }
     for (const fi of files) {
       const dur = parseFloat((fi.params && fi.params.duration) || 0);
+      const thumb = fi.thumbnail ||
+        (fi.thumbnail_link) ||
+        (fi.image && fi.image.thumbnail_link) ||
+        (fi.links && fi.links.thumbnail && fi.links.thumbnail.url) ||
+        (fi.icon_link) || '';
       out.push({
         id: fi.id,
         name: fi.name,
@@ -2172,6 +2181,7 @@
         mime: fi.mime_type || '',
         duration: dur,
         parentPath: parentPath,
+        thumbnail: thumb,
       });
     }
     if (statusFn) statusFn(folderId, parentPath, files.length, null);
@@ -2219,10 +2229,104 @@
   }
 
   // 查重：套用增强大师三种算法（精准匹配 + 视频时长相似 + 名称相似）
-  // algoOpts: { hash, sim, name, strict, recursive, maxDepth, maxItems, fileType }
+  // algoOpts: { hash, sim, name, thumb, strict, recursive, maxDepth, maxItems, fileType }
   function pathOfDupStack(stack) {
     if (!stack || stack.length === 0) return '';
     return stack.map(function(s) { return s.name; }).join('/');
+  }
+
+  // 缩略图感知哈希（aHash）：用于「缩略图相似」算法
+  function loadImageForHash(url) {
+    return new Promise(function(resolve) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function() { resolve(img); };
+      img.onerror = function() { resolve(null); };
+      img.src = url;
+    });
+  }
+
+  function computeAverageHash(img) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 8; canvas.height = 8;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, 8, 8);
+      const data = ctx.getImageData(0, 0, 8, 8).data;
+      let sum = 0;
+      const gray = [];
+      for (let i = 0; i < data.length; i += 4) {
+        const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        gray.push(g);
+        sum += g;
+      }
+      const avg = sum / gray.length;
+      let bits = '';
+      for (const v of gray) bits += (v >= avg ? '1' : '0');
+      return bits;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function hammingDistance(a, b) {
+    if (!a || !b || a.length !== b.length) return Infinity;
+    let d = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++;
+    return d;
+  }
+
+  // 并发限制：每次同时加载 N 张缩略图
+  async function computeThumbHashes(items, concurrency, statusFn) {
+    const out = [];
+    let done = 0;
+    const queue = items.slice();
+    async function worker() {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item.thumbnail) continue;
+        const img = await loadImageForHash(item.thumbnail);
+        const hash = img ? computeAverageHash(img) : null;
+        if (hash) {
+          item._thumbHash = hash;
+          out.push(item);
+        }
+        done++;
+        if (statusFn && done % 5 === 0) statusFn(done, items.length);
+      }
+    }
+    const workers = [];
+    for (let i = 0; i < concurrency; i++) workers.push(worker());
+    await Promise.all(workers);
+    return out;
+  }
+
+  // 按缩略图 aHash 距离分组（默认按 strictness 取阈值：loose=10, normal=8, strict=5）
+  async function groupByThumbnail(candidates, strictness, assigned, statusFn) {
+    const threshold = strictness === 'loose' ? 10 : (strictness === 'strict' ? 5 : 8);
+    const pool = candidates.filter(function(x) {
+      return !assigned.has(x.id) && x.thumbnail && (/^image\//.test(x.mime) || /^video\//.test(x.mime));
+    });
+    const withHash = await computeThumbHashes(pool, 6, statusFn);
+    const groups = [];
+    for (let i = 0; i < withHash.length; i++) {
+      if (assigned.has(withHash[i].id)) continue;
+      const group = [withHash[i]];
+      assigned.add(withHash[i].id);
+      for (let j = i + 1; j < withHash.length; j++) {
+        if (assigned.has(withHash[j].id)) continue;
+        if (hammingDistance(withHash[i]._thumbHash, withHash[j]._thumbHash) <= threshold) {
+          group.push(withHash[j]);
+          assigned.add(withHash[j].id);
+        }
+      }
+      if (group.length > 1) {
+        const sorted = group.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+        groups.push({ type: 'thumb', label: '缩略图相似', items: sorted });
+      }
+    }
+    return groups;
   }
 
   function renderDupCheckedChips() {
@@ -2291,6 +2395,7 @@
     const useHash = algoOpts.hash !== false;
     const useSim = algoOpts.sim !== false;
     const useName = algoOpts.name !== false;
+    const useThumb = algoOpts.thumb === true;
     const strictness = algoOpts.strict || 'normal';
     const isRecursive = algoOpts.recursive !== false;
     const maxDepth = algoOpts.maxDepth || 4;
@@ -2417,6 +2522,15 @@
       }
     }
 
+    // 5) 缩略图相似（aHash）：默认关闭，文件多时较慢，因为要在 canvas 里拉缩略图
+    if (useThumb) {
+      ui.dupNote.textContent = '正在计算缩略图相似度（文件多时较慢）…';
+      const thumbGroups = await groupByThumbnail(candidates, strictness, assigned, function(done, total) {
+        ui.dupNote.textContent = '缩略图哈希：' + done + '/' + total;
+      });
+      for (const g of thumbGroups) groups.push(g);
+    }
+
     return groups;
   }
 
@@ -2461,11 +2575,14 @@
         '<div class="pp-dup-group-items">';
       g.items.forEach(function(f, fi) {
         const checked = fi === 0 ? false : (f._dupChecked !== false);
-        const thumb = /^image\//.test(f.mime || '') ? '🖼' : (/^video\//.test(f.mime || '') ? '🎬' : '📄');
+        const thumbEmoji = /^image\//.test(f.mime || '') ? '🖼' : (/^video\//.test(f.mime || '') ? '🎬' : '📄');
+        const thumbHtml = f.thumbnail
+          ? '<img src="' + esc(f.thumbnail) + '" crossorigin="anonymous" alt="" onerror="this.style.display=\'none\';this.parentNode.classList.add(\'fallback\');this.parentNode.textContent=\'' + thumbEmoji + '\';">'
+          : thumbEmoji;
         const path = f.parentPath || '';
         html += '<div class="pp-dup-row ' + (checked ? 'to-del' : 'to-keep') + '" data-gi="' + gi + '" data-fi="' + fi + '">' +
           '<input type="checkbox" data-gi="' + gi + '" data-fi="' + fi + '"' + (checked ? ' checked' : '') + '>' +
-          '<span class="pp-dup-thumb">' + thumb + '</span>' +
+          '<span class="pp-dup-thumb' + (f.thumbnail ? '' : ' fallback') + '">' + thumbHtml + '</span>' +
           '<span class="pp-dup-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
           '<span class="pp-dup-path" title="' + esc(path) + '">' + (path ? esc(path) : '—') + '</span>' +
           '<span class="pp-dup-meta">' + fmtSize(f.size) + '</span>' +
@@ -2583,6 +2700,7 @@
     const useHash = ui.dupAlgoHash ? ui.dupAlgoHash.checked : true;
     const useSim = ui.dupAlgoSim ? ui.dupAlgoSim.checked : true;
     const useName = ui.dupAlgoName ? ui.dupAlgoName.checked : true;
+    const useThumb = ui.dupAlgoThumb ? ui.dupAlgoThumb.checked : false;
     const strictness = ui.dupStrict ? ui.dupStrict.value : 'normal';
     const fileType = ui.dupFileType ? ui.dupFileType.value : 'all';
     // 扫描目标：勾选模式 > 勾选的子文件夹；非勾选模式 > 当前文件夹（可递归）
@@ -2596,7 +2714,7 @@
     await sleep(50); // 让 UI 先刷新
     try {
       state.dupGroups = await buildDupGroups({
-        hash: useHash, sim: useSim, name: useName, strict: strictness,
+        hash: useHash, sim: useSim, name: useName, thumb: useThumb, strict: strictness,
         recursive: recursive,
         targets: targets,
         fileType: fileType,
@@ -4007,6 +4125,7 @@
       dupAlgoHash: shadowRoot.getElementById('pp-dup-algo-hash'),
       dupAlgoSim: shadowRoot.getElementById('pp-dup-algo-sim'),
       dupAlgoName: shadowRoot.getElementById('pp-dup-algo-name'),
+      dupAlgoThumb: shadowRoot.getElementById('pp-dup-algo-thumb'),
       dupStrict: shadowRoot.getElementById('pp-dup-strict'),
       dupFileType: shadowRoot.getElementById('pp-dup-filetype'),
       dupRecursive: shadowRoot.getElementById('pp-dup-recursive'),
