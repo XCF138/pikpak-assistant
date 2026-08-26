@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.5
+// @version      1.25.6
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.5';
+  const SCRIPT_VERSION = '1.25.6';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -3880,10 +3880,22 @@
     a.className = 'pp-quick-entry-a';
     a.href = 'javascript:void(0)';
     a.title = '打开 / 收起 PIKPAK 助手';
-    const iconUrl = getPikpakIconUrl().replace(/"/g, '&quot;');
-    a.innerHTML =
-      '<span class="pp-quick-entry-ico"><img src="' + iconUrl + '" alt="" /></span>' +
-      '<span class="pp-quick-entry-txt">PIKPAK</span>';
+    const ico = document.createElement('span');
+    ico.className = 'pp-quick-entry-ico';
+    const img = document.createElement('img');
+    img.alt = '';
+    // favicon 加载失败时回退到内置 SVG（保证入口一定有图标）
+    img.addEventListener('error', function() {
+      ico.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff" aria-hidden="true">' +
+        '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.5 3.6L12 11.5 5.5 7.9 12 4.3zM5 9.6l6 3.3v6.6l-6-3.3V9.6zm14 0v6.6l-6 3.3v-6.6l6-3.3z"/></svg>';
+    });
+    try { img.src = getPikpakIconUrl(); } catch (e) { img.src = 'about:blank'; }
+    ico.appendChild(img);
+    a.appendChild(ico);
+    const txt = document.createElement('span');
+    txt.className = 'pp-quick-entry-txt';
+    txt.textContent = 'PIKPAK';
+    a.appendChild(txt);
     a.addEventListener('click', function(e) {
       e.preventDefault();
       if (!ui.panel) return;
