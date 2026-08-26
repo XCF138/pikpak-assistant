@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.19.0
+// @version      1.20.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.19.0';
+  const SCRIPT_VERSION = '1.20.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -116,36 +116,35 @@
 
   /* ================================================================
    * 注入 PikPak 左侧入口的样式（不能用 Shadow DOM 隔离）
-   * 形态：官方侧边栏项的模式 —— 左边一个小图标，右边是字（水平排列）
+   * 严格对齐官方侧边栏项：透明背景、左边小图标、右边文字
    * ================================================================ */
   const PP_QUICK_CSS = `
     /* 入口容器：在官方侧边栏里时占满整行 */
     .pp-quick-entry { width: 100%; box-sizing: border-box; }
     .pp-quick-entry-btn {
-      display: inline-flex; align-items: center; gap: 10px;
-      width: 100%; min-height: 40px; padding: 8px 12px;
+      display: flex; align-items: center; gap: 12px;
+      width: 100%; min-height: 40px; padding: 9px 16px;
       color: #2c3e50; cursor: pointer;
       border-radius: 8px; background-color: transparent; border: none;
-      font: 500 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font: 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
       text-align: left; transition: background-color .15s;
     }
-    .pp-quick-entry-btn:hover { background-color: #f1f3f8; }
-    .pp-quick-entry-btn:active { background-color: #e6e9f2; }
-    /* 左边的小图标（蓝色） */
+    .pp-quick-entry-btn:hover { background-color: #f5f6fa; }
+    .pp-quick-entry-btn:active { background-color: #eff1f5; }
+    /* 左边的小图标：透明背景、与官方图标对齐 */
     .pp-quick-entry-ico {
-      flex: none; display: flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; border-radius: 7px;
-      background: linear-gradient(135deg, #3b6bff, #2f54eb);
-      color: #fff; font-size: 15px; font-weight: 700; line-height: 1;
-      box-shadow: 0 2px 5px rgba(47, 84, 235, .35);
+      flex: none; width: 20px; height: 20px;
+      display: flex; align-items: center; justify-content: center;
+      color: #3b6bff; background-color: transparent;
+      font-size: 18px; font-weight: 700; line-height: 1;
     }
     /* 图标后面的文字 */
     .pp-quick-entry-txt {
       flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-      font-weight: 600;
+      font-weight: 500;
     }
 
-    /* 降级：屏幕最左侧固定（侧边栏未渲染时的兜底，立即出现） */
+    /* 降级：屏幕最左侧固定（侧边栏未渲染时的兜底） */
     .pp-quick-fallback-left {
       position: fixed; left: 8px; top: 50%; transform: translateY(-50%);
       z-index: 999998; width: auto; background: #fff; border-radius: 10px;
@@ -725,18 +724,6 @@
     .hidden { display: none !important; }
     button { cursor: pointer; font-family: inherit; }
 
-    /* ---- 悬浮球 ---- */
-    .pp-fab {
-      position: fixed; right: 24px; bottom: 96px; z-index: 2147483646;
-      display: flex; align-items: center; gap: 7px;
-      background: linear-gradient(135deg, #3b6bff, #2f54eb);
-      color: #fff; padding: 11px 18px; border-radius: 999px;
-      font-size: 14px; font-weight: 600; user-select: none;
-      box-shadow: 0 6px 20px rgba(47, 84, 235, .45);
-      transition: transform .15s, box-shadow .15s;
-    }
-    .pp-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(47, 84, 235, .55); }
-
     /* ---- 面板 ---- */
     .pp-panel {
       position: fixed; right: 24px; bottom: 96px; z-index: 2147483647;
@@ -1041,14 +1028,6 @@
 
   const HTML = `
     <style>${CSS}</style>
-    <div class="pp-fab" id="pp-fab" title="PikPak 工作台">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-        <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6a1.5 1.5 0 0 1 1.1.5l.9 1h4.4A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12V4.5Z" fill="#fff" opacity=".4"/>
-        <path d="M5.5 9h5M8.5 11.5v-5" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>
-      </svg>
-      <span>PIKPAK助手</span>
-    </div>
-
     <div class="pp-panel hidden" id="pp-panel">
       <div class="pp-header" id="pp-header" title="按住此处拖动窗口；双击复位位置">
         <div class="pp-title-row">
@@ -2758,7 +2737,6 @@
    * 事件绑定
    * ================================================================ */
   function bindEvents() {
-    ui.fab.addEventListener('click', openPanel);
     ui.close.addEventListener('click', closePanel);
 
     // 全屏 / 窗口切换
@@ -3594,7 +3572,7 @@
     btn.title = '打开 / 收起 PIKPAK 助手';
     btn.innerHTML =
       '<span class="pp-quick-entry-ico">P</span>' +
-      '<span class="pp-quick-entry-txt">PIKPAK助手</span>';
+      '<span class="pp-quick-entry-txt">PIKPAK</span>';
     btn.addEventListener('click', function() {
       if (!ui.panel) return;
       if (ui.panel.classList.contains('hidden')) openPanel();
@@ -3676,7 +3654,6 @@
    * ================================================================ */
   async function openPanel() {
     ui.panel.classList.remove('hidden');
-    ui.fab.classList.add('hidden');
     if (state.inited) return;
     state.inited = true;
 
@@ -3711,7 +3688,6 @@
 
   function closePanel() {
     ui.panel.classList.add('hidden');
-    ui.fab.classList.remove('hidden');
   }
 
   /* ================================================================
@@ -3736,7 +3712,6 @@
 
     ui = {
       shadowRoot: shadowRoot,
-      fab: shadowRoot.getElementById('pp-fab'),
       panel: shadowRoot.getElementById('pp-panel'),
       close: shadowRoot.getElementById('pp-close'),
       reset: shadowRoot.getElementById('pp-reset'),
