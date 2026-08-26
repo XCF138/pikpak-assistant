@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.25.1
+// @version      1.25.5
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.25.1';
+  const SCRIPT_VERSION = '1.25.5';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -1048,15 +1048,7 @@
     .pp-dup-row.to-keep { background: #f0faf2; }
     .pp-dup-row.to-keep:hover { background: #e6f7e8; }
     .pp-dup-empty { padding: 30px 14px; text-align: center; font-size: 12px; color: #a9aeb8; }
-    .pp-dup-actions {
-      position: sticky; bottom: 0; left: 0; right: 0; z-index: 10;
-      width: 100%; box-sizing: border-box;
-      display: flex; gap: 8px; justify-content: flex-end;
-      padding: 10px 14px; margin: 0;
-      background: rgba(255,255,255,.98); border-top: 1px solid #e1e9f7;
-      box-shadow: 0 -2px 10px rgba(30, 64, 160, .06);
-      border-radius: 0 0 11px 11px;
-    }
+    .pp-dup-actions { display: flex; gap: 8px; align-items: center; }
 
     .pp-progress { margin-top: 6px; }
     .pp-progress-track { height: 8px; background: #e6edfb; border-radius: 4px; overflow: hidden; }
@@ -1391,12 +1383,19 @@
         </div>
         <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
         <div class="pp-rn-rules" style="border-radius:8px;margin-top:6px;">
-          <div class="pp-rn-rule-row" style="gap:14px;flex-wrap:wrap;">
-            <label style="width:auto;flex:none;">算法</label>
-            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
-            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
-            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
-            <label class="pp-rn-check" title="对图片/视频封面计算感知哈希并比较；文件多时较慢，且依赖缩略图可跨域加载"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
+          <div class="pp-rn-rule-row" style="gap:14px;align-items:flex-start;">
+            <label style="width:auto;flex:none;padding-top:2px;">算法</label>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;flex:1;">
+              <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
+              <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
+              <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
+              <label class="pp-rn-check" title="对图片/视频封面计算感知哈希并比较；文件多时较慢，且依赖缩略图可跨域加载"><input type="checkbox" id="pp-dup-algo-thumb"> 缩略图相似（慢）</label>
+            </div>
+            <span class="pp-dup-actions" id="pp-dup-actions" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+              <button class="pp-btn pp-btn-sm" id="pp-dup-select-all-del">全选可删除项</button>
+              <button class="pp-btn pp-btn-sm" id="pp-dup-invert">反选</button>
+              <button class="pp-btn pp-btn-primary pp-btn-sm" id="pp-dup-clean">🗑 将勾选项移到回收站</button>
+            </span>
           </div>
           <div class="pp-rn-rule-row">
             <label style="width:auto;flex:none;">文件类型</label>
@@ -2612,13 +2611,21 @@
       });
       html += '</div></div>';
     });
-    html += '<div class="pp-dup-actions">' +
-      '<button class="pp-btn" id="pp-dup-select-all-del">全选可删除项</button>' +
-      '<button class="pp-btn" id="pp-dup-invert">反选</button>' +
-      '<button class="pp-btn pp-btn-primary" id="pp-dup-clean">🗑 将勾选项移到回收站</button>' +
-      '</div>';
     panel.innerHTML = html;
     bindDupResultEvents();
+    updateDupActionState();
+  }
+
+  // 有结果才允许点结果操作按钮（常驻于算法行，需根据是否有结果切换可用态）
+  function updateDupActionState() {
+    const groups = state.dupGroups || [];
+    const disabled = !(groups && groups.length > 0);
+    const clean = shadowRoot.getElementById('pp-dup-clean');
+    const selAll = shadowRoot.getElementById('pp-dup-select-all-del');
+    const invert = shadowRoot.getElementById('pp-dup-invert');
+    if (clean) clean.disabled = disabled;
+    if (selAll) selAll.disabled = disabled;
+    if (invert) invert.disabled = disabled;
   }
 
   function bindDupResultEvents() {
@@ -2660,26 +2667,6 @@
         g.items[fi]._dupChecked = cb.checked;
         renderDupGroups();
       });
-    });
-    // 按钮
-    const cleanBtn = panel.querySelector('#pp-dup-clean');
-    const selAllBtn = panel.querySelector('#pp-dup-select-all-del');
-    const invertBtn = panel.querySelector('#pp-dup-invert');
-    if (cleanBtn) cleanBtn.addEventListener('click', executeDupClean);
-    if (selAllBtn) selAllBtn.addEventListener('click', function() {
-      (state.dupGroups || []).forEach(function(g) {
-        g.items.forEach(function(f, fi) {
-          if (fi === 0) f._dupChecked = false;
-          else f._dupChecked = true;
-        });
-      });
-      renderDupGroups();
-    });
-    if (invertBtn) invertBtn.addEventListener('click', function() {
-      (state.dupGroups || []).forEach(function(g) {
-        g.items.forEach(function(f) { f._dupChecked = !f._dupChecked; });
-      });
-      renderDupGroups();
     });
   }
 
@@ -3334,6 +3321,27 @@
     });
     // 扫描按钮
     ui.dupScan.addEventListener('click', executeDupScan);
+
+    // 查重结果操作按钮（常驻于算法行最右侧，不随结果滚动）
+    const dupClean = shadowRoot.getElementById('pp-dup-clean');
+    const dupSelAll = shadowRoot.getElementById('pp-dup-select-all-del');
+    const dupInvert = shadowRoot.getElementById('pp-dup-invert');
+    if (dupClean) dupClean.addEventListener('click', executeDupClean);
+    if (dupSelAll) dupSelAll.addEventListener('click', function() {
+      (state.dupGroups || []).forEach(function(g) {
+        g.items.forEach(function(f, fi) {
+          if (fi === 0) f._dupChecked = false;
+          else f._dupChecked = true;
+        });
+      });
+      renderDupGroups();
+    });
+    if (dupInvert) dupInvert.addEventListener('click', function() {
+      (state.dupGroups || []).forEach(function(g) {
+        g.items.forEach(function(f) { f._dupChecked = !f._dupChecked; });
+      });
+      renderDupGroups();
+    });
 
     // ---- 导出目录树模式：面包屑导航 ----
     ui.bcTree.addEventListener('click', (e) => {
