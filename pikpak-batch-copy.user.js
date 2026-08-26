@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.8.2
-// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压、文件查重去重）；③ 导出文件夹目录树（TXT / PNG 图片）；④ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
-// @author       WorkBuddy
+// @version      1.9.0
+// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（哈希+大小分组，可搜索筛选，一键去重）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
+// @author       XCF138
+// @homepageURL  https://github.com/XCF138/pikpak-assistant
+// @supportURL   https://github.com/XCF138/pikpak-assistant/issues
+// @updateURL    https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js
+// @downloadURL  https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js
 // @match        https://mypikpak.com/*
 // @match        https://www.mypikpak.com/*
 // @match        https://mypikpak.net/*
@@ -691,12 +695,19 @@
     /* ---- 面板 ---- */
     .pp-panel {
       position: fixed; right: 24px; bottom: 96px; z-index: 2147483647;
-      width: 480px;
-      height: min(640px, calc(100vh - 130px));
+      width: 860px;
+      max-width: calc(100vw - 32px);
+      height: min(620px, calc(100vh - 130px));
       background: #edf2fb; border: 1px solid #d9e3f5; border-radius: 16px;
       box-shadow: 0 16px 56px rgba(15, 25, 60, .22);
       display: flex; flex-direction: column; overflow: hidden;
       color: #1f2329;
+    }
+    /* 全屏模式：铺满整个视口 */
+    .pp-panel.pp-fullscreen {
+      right: 0; bottom: 0; left: 0; top: 0;
+      width: 100vw; height: 100vh; max-width: 100vw;
+      border-radius: 0; border: none;
     }
     .pp-header {
       padding: 14px 16px 13px; cursor: move; user-select: none;
@@ -714,6 +725,9 @@
     }
     .pp-mini-btn:hover { background: #fff; color: #2f54eb; border-color: #fff; }
     .pp-sub { font-size: 12px; color: rgba(255,255,255,.78); margin-top: 4px; }
+    .pp-author { margin-left: 6px; font-size: 11px; }
+    .pp-author a { color: rgba(255,255,255,.9); text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,.45); }
+    .pp-author a:hover { color: #fff; border-bottom-color: #fff; }
 
     /* ---- 功能导航（分段控件卡片）---- */
     .pp-panel-tabs {
@@ -979,11 +993,17 @@
         <div class="pp-title-row">
           <span class="pp-title">⠿ PikPak 工作台</span>
           <span class="pp-header-btns">
+            <button class="pp-mini-btn" id="pp-fullscreen" title="全屏 / 窗口切换">⛶ 全屏</button>
             <button class="pp-mini-btn" id="pp-reset" title="清空所有选择">重置</button>
             <button class="pp-mini-btn" id="pp-close" title="收起面板">×</button>
           </span>
         </div>
-        <div class="pp-sub">批量复制 · 目录树导出 · 批量重命名，直接使用网页登录状态</div>
+        <div class="pp-sub">
+          批量复制/移动 · 文件整理 · 目录树 · 批量重命名 · 文件查重
+          <span class="pp-author" id="pp-author">
+            by <a href="https://github.com/XCF138/pikpak-assistant" target="_blank" rel="noopener">XCF138</a>
+          </span>
+        </div>
         <div class="pp-steps" id="pp-steps">
           <div class="pp-step active" data-n="1"><i>1</i>选文件</div>
           <div class="pp-step-line"></div>
@@ -996,6 +1016,7 @@
       <div class="pp-panel-tabs">
         <button class="pp-panel-tab active" data-panel="copy">📋 批量复制</button>
         <button class="pp-panel-tab" data-panel="manage">🗂 文件整理</button>
+        <button class="pp-panel-tab" data-panel="dup">🔎 文件查重</button>
         <button class="pp-panel-tab" data-panel="tree">🌳 目录树</button>
         <button class="pp-panel-tab" data-panel="rename">✏️ 重命名</button>
       </div>
@@ -1244,16 +1265,27 @@
             <select id="pp-manage-op">
               <option value="trash">移到回收站（可恢复）</option>
               <option value="unzip">批量解压（zip/rar/7z 到所在目录）</option>
-              <option value="dup">文件查重（找出重复文件）</option>
             </select>
           </div>
         </div>
-        <div class="pp-list hidden" id="pp-manage-dup-panel" style="flex:1;min-height:60px;"></div>
         <div class="pp-footer">
-          <span class="pp-note" id="pp-manage-note">勾选项目后选择操作执行；查重会扫描当前文件夹</span>
+          <span class="pp-note" id="pp-manage-note">勾选项目后选择操作执行</span>
           <button class="pp-btn pp-btn-primary" id="pp-manage-execute" disabled>执行</button>
         </div>
       </div><!-- /pp-manage-body -->
+
+      <!-- 文件查重模式（独立栏） -->
+      <div class="pp-body hidden" id="pp-dup-body">
+        <div class="pp-toolbar">
+          <div class="pp-bc" id="pp-bc-dup"></div>
+          <input class="pp-search" id="pp-search-dup" placeholder="搜索重复文件名…">
+        </div>
+        <div class="pp-footer" style="padding-bottom:0;">
+          <span class="pp-note" id="pp-dup-note">扫描当前文件夹，按「哈希+大小」找出重复文件，每组保留时间最新的一个</span>
+          <button class="pp-btn pp-btn-primary" id="pp-dup-scan">🔍 扫描查重</button>
+        </div>
+        <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;margin-top:8px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
+      </div><!-- /pp-dup-body -->
 
       <div class="pp-resize" id="pp-resize" title="拖动调整窗口大小"></div>
     </div>
@@ -1287,11 +1319,14 @@
     manageBrowse: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0, inited: false },
     manageTypeFilter: 'all',   // 整理列表显示类型：all | folder | file
     manageItems: [],           // 已勾选的项目 [{id, name, isFolder, size, hash}]
-    manageOp: 'trash',         // 操作类型：trash | unzip | dup
+    manageOp: 'trash',         // 操作类型：trash | unzip
     manageRunning: false,
     manageResults: null,       // 执行结果 [{label, ok, msg}]
+    // 文件查重模式（独立）
+    dupBrowse: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0, inited: false },
     dupGroups: null,           // 查重结果：[[{id,name,size}, ...], ...] 每组为重复项
     dupScanning: false,
+    dupFilter: '',             // 查重结果搜索关键字
     running: false,
     stopRequested: false,
     results: [],
@@ -1853,6 +1888,7 @@
     // 切内容区
     ui.copyBody.classList.toggle('hidden', mode !== 'copy');
     ui.manageBody.classList.toggle('hidden', mode !== 'manage');
+    ui.dupBody.classList.toggle('hidden', mode !== 'dup');
     ui.treeBody.classList.toggle('hidden', mode !== 'tree');
     ui.renameBody.classList.toggle('hidden', mode !== 'rename');
     // 步骤指示器只在 copy 模式显示
@@ -1864,6 +1900,14 @@
         state.manageBrowse.stack = state.browse2.stack.map(function(s) { return { id: s.id, name: s.name }; });
       }
       loadBrowse(state.manageBrowse, renderManageList);
+    }
+    // 首次进入 dup 模式时加载
+    if (mode === 'dup' && !state.dupBrowse.inited) {
+      state.dupBrowse.inited = true;
+      if (state.browse2.inited && state.browse2.stack.length > 1) {
+        state.dupBrowse.stack = state.browse2.stack.map(function(s) { return { id: s.id, name: s.name }; });
+      }
+      loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
     }
     // 首次进入 tree 模式时加载
     if (mode === 'tree' && !state.treeBrowse.inited) {
@@ -1963,12 +2007,6 @@
       ui.manageExecute.disabled = true;
       return;
     }
-    if (op === 'dup') {
-      ui.manageNote.textContent = '查重会扫描当前文件夹下的所有文件，按「哈希+大小」分组找出重复项';
-      ui.manageExecute.textContent = '🔍 扫描当前文件夹查重';
-      ui.manageExecute.disabled = state.dupScanning;
-      return;
-    }
     let label = op === 'trash' ? '🗑 移到回收站' : '📦 批量解压';
     if (n === 0) {
       ui.manageNote.textContent = '勾选要操作的' + (op === 'unzip' ? '压缩包' : '项目') + '后点「执行」';
@@ -1983,7 +2021,7 @@
 
   // 查重：按 哈希+大小 分组，找出组内 >1 的重复项
   function buildDupGroups() {
-    const b = state.manageBrowse;
+    const b = state.dupBrowse;
     if (!b.data) return [];
     const allFiles = b.data.files || [];
     const byKey = new Map();
@@ -2010,17 +2048,29 @@
   }
 
   function renderDupGroups() {
-    const panel = ui.manageDupPanel;
+    const panel = ui.dupPanel;
     const groups = state.dupGroups || [];
-    if (groups.length === 0) {
-      panel.classList.add('hidden');
-      panel.innerHTML = '';
+    if (!groups || groups.length === 0) {
+      panel.innerHTML = '<div class="pp-hint">' + (state.dupScanning ? '正在扫描…' : '当前文件夹未发现重复文件（没有哈希+大小完全相同的文件）') + '</div>';
       return;
     }
-    panel.classList.remove('hidden');
+    // 搜索过滤：按文件名关键字过滤组
+    const kw = (state.dupFilter || '').trim().toLowerCase();
+    let shown = groups;
+    if (kw) {
+      shown = groups.filter(function(g) {
+        return g.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
+      });
+    }
+    if (shown.length === 0) {
+      panel.innerHTML = '<div class="pp-hint">没有匹配「' + esc(state.dupFilter) + '」的重复组</div>';
+      return;
+    }
     let html = '<div class="pp-hint" style="padding:8px;">找到 <b>' + groups.length + '</b> 组重复文件（共 ' +
-      groups.reduce(function(s, g) { return s + g.length; }, 0) + ' 个文件）。每组仅保留时间最新的一个，勾选其余重复项移到回收站。</div>';
-    groups.forEach(function(g, gi) {
+      groups.reduce(function(s, g) { return s + g.length; }, 0) + ' 个文件）' +
+      (kw ? '，当前筛选出 <b>' + shown.length + '</b> 组' : '') +
+      '。每组仅保留时间最新的一个，其余移到回收站。</div>';
+    shown.forEach(function(g, gi) {
       const base = g[0];
       html += '<div class="pp-sum-head">重复组 ' + (gi + 1) + '：' + esc(base.name) + '（' + fmtSize(base.size) + '，共 ' + g.length + ' 个）</div>';
       g.forEach(function(f, fi) {
@@ -2042,15 +2092,20 @@
 
   async function executeDupClean() {
     const groups = state.dupGroups || [];
+    const kw = (state.dupFilter || '').trim().toLowerCase();
+    // 若在搜索过滤状态，只清理筛选出的组
+    const scope = kw ? groups.filter(function(g) {
+      return g.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
+    }) : groups;
     const toDelete = [];
-    groups.forEach(function(g) {
+    scope.forEach(function(g) {
       for (let i = 1; i < g.length; i++) toDelete.push(g[i].id);
     });
     if (toDelete.length === 0) return;
     if (!window.confirm('确定要把 ' + toDelete.length + ' 个重复文件移到回收站吗？\n\n每组只保留时间最新的一个，其余全部移入回收站（可恢复）。')) return;
 
-    state.manageRunning = true;
-    updateManageFooter();
+    state.dupScanning = true;
+    ui.dupNote.textContent = '正在清理重复文件…';
     // 分批，每批最多 100 个
     const results = [];
     for (let i = 0; i < toDelete.length; i += 100) {
@@ -2062,38 +2117,40 @@
         results.push({ label: '第 ' + (i / 100 + 1) + ' 批（' + chunk.length + ' 个）', ok: false, msg: e.message || String(e) });
       }
     }
-    state.manageRunning = false;
+    state.dupScanning = false;
     state.dupGroups = null;
     renderDupGroups();
-    updateManageFooter();
-    ui.manageNote.textContent = '完成：成功 ' + results.filter((r) => r.ok).length + ' 批，失败 ' +
+    ui.dupNote.textContent = '完成：成功 ' + results.filter((r) => r.ok).length + ' 批，失败 ' +
       results.filter((r) => !r.ok).length + ' 批。列表刷新中…';
-    loadBrowse(state.manageBrowse, renderManageList);
+    loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
+  }
+
+  async function executeDupScan() {
+    if (state.dupScanning) return;
+    state.dupScanning = true;
+    state.dupFilter = '';
+    if (ui.dupSearch) ui.dupSearch.value = '';
+    ui.dupNote.textContent = '正在扫描当前文件夹查重…';
+    ui.dupPanel.innerHTML = '<div class="pp-hint">正在扫描…</div>';
+    await sleep(50); // 让 UI 先刷新
+    try {
+      state.dupGroups = buildDupGroups();
+    } catch (e) {
+      state.dupGroups = null;
+      ui.dupNote.textContent = '查重失败：' + (e.message || String(e));
+    }
+    state.dupScanning = false;
+    renderDupGroups();
+    if (state.dupGroups && state.dupGroups.length === 0) {
+      ui.dupNote.textContent = '未发现重复文件（当前文件夹内没有哈希+大小完全相同的文件）';
+    } else if (state.dupGroups) {
+      ui.dupNote.textContent = '找到 ' + state.dupGroups.length + ' 组重复文件，可输入关键字筛选';
+    }
   }
 
   async function executeManage() {
     if (state.manageRunning) return;
     const op = state.manageOp;
-
-    if (op === 'dup') {
-      state.dupScanning = true;
-      updateManageFooter();
-      ui.manageNote.textContent = '正在扫描当前文件夹查重…';
-      await sleep(50); // 让 UI 先刷新
-      try {
-        state.dupGroups = buildDupGroups();
-      } catch (e) {
-        state.dupGroups = null;
-        ui.manageNote.textContent = '查重失败：' + (e.message || String(e));
-      }
-      state.dupScanning = false;
-      renderDupGroups();
-      updateManageFooter();
-      if (state.dupGroups && state.dupGroups.length === 0) {
-        ui.manageNote.textContent = '未发现重复文件（当前文件夹内没有哈希+大小完全相同的文件）';
-      }
-      return;
-    }
 
     if (state.manageItems.length === 0) return;
     const verb = op === 'trash' ? '移到回收站' : '解压';
@@ -2347,6 +2404,22 @@
     ui.fab.addEventListener('click', openPanel);
     ui.close.addEventListener('click', closePanel);
 
+    // 全屏 / 窗口切换
+    ui.fullscreen.addEventListener('click', () => {
+      const panel = ui.panel;
+      const isFull = panel.classList.toggle('pp-fullscreen');
+      ui.fullscreen.textContent = isFull ? '⧉ 窗口' : '⛶ 全屏';
+      ui.fullscreen.title = isFull ? '切换回窗口模式' : '全屏铺满整个屏幕';
+      // 全屏时禁用拖动/缩放手柄（铺满屏幕无需拖）
+      if (isFull) {
+        panel.style.left = '0'; panel.style.top = '0';
+        panel.style.right = '0'; panel.style.bottom = '0';
+        panel.style.width = '100vw'; panel.style.height = '100vh';
+      } else {
+        applySavedGeom();
+      }
+    });
+
     ui.reset.addEventListener('click', () => {
       state.files = [];
       state.folders = [];
@@ -2495,8 +2568,6 @@
     ui.manageOp.addEventListener('change', () => {
       state.manageOp = ui.manageOp.value;
       state.manageItems = [];
-      state.dupGroups = null;
-      renderDupGroups();
       renderManageChips();
     });
 
@@ -2551,6 +2622,23 @@
 
     // 执行
     ui.manageExecute.addEventListener('click', executeManage);
+
+    /* ---- 文件查重模式 ---- */
+    // 面包屑导航
+    ui.bcDup.addEventListener('click', (e) => {
+      const el = e.target.closest('.pp-crumb');
+      if (!el || el.classList.contains('cur')) return;
+      state.dupBrowse.stack = state.dupBrowse.stack.slice(0, Number(el.dataset.i) + 1);
+      state.dupGroups = null;
+      loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
+    });
+    // 搜索过滤重复组
+    ui.dupSearch.addEventListener('input', () => {
+      state.dupFilter = ui.dupSearch.value;
+      renderDupGroups();
+    });
+    // 扫描按钮
+    ui.dupScan.addEventListener('click', executeDupScan);
 
     // ---- 导出目录树模式：面包屑导航 ----
     ui.bcTree.addEventListener('click', (e) => {
@@ -2927,6 +3015,7 @@
     header.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.target.closest('button')) return; // 按钮不触发拖动
+      if (panel.classList.contains('pp-fullscreen')) return; // 全屏时不可拖动
       const rect = panel.getBoundingClientRect();
       panel.style.left = rect.left + 'px';
       panel.style.top = rect.top + 'px';
@@ -2958,6 +3047,7 @@
     // ---- 右下角缩放 ----
     ui.resize.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
+      if (panel.classList.contains('pp-fullscreen')) return; // 全屏时不可缩放
       const sx = e.clientX, sy = e.clientY;
       const sw = panel.offsetWidth, sh = panel.offsetHeight;
       e.preventDefault();
@@ -3124,10 +3214,16 @@
       manageInvert: shadowRoot.getElementById('pp-manage-invert'),
       manageChips: shadowRoot.getElementById('pp-manage-chips'),
       manageOp: shadowRoot.getElementById('pp-manage-op'),
-      manageDupPanel: shadowRoot.getElementById('pp-manage-dup-panel'),
       manageNote: shadowRoot.getElementById('pp-manage-note'),
       manageExecute: shadowRoot.getElementById('pp-manage-execute'),
       copyModeRow: shadowRoot.getElementById('pp-copy-mode-row'),
+      fullscreen: shadowRoot.getElementById('pp-fullscreen'),
+      dupBody: shadowRoot.getElementById('pp-dup-body'),
+      bcDup: shadowRoot.getElementById('pp-bc-dup'),
+      dupSearch: shadowRoot.getElementById('pp-search-dup'),
+      dupPanel: shadowRoot.getElementById('pp-dup-panel'),
+      dupNote: shadowRoot.getElementById('pp-dup-note'),
+      dupScan: shadowRoot.getElementById('pp-dup-scan'),
     };
 
     bindEvents();
