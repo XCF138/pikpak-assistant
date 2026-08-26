@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.15.0
+// @version      1.16.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.15.0';
+  const SCRIPT_VERSION = '1.16.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -3574,8 +3574,8 @@
    * 仿照 PikPak 侧边栏"图标 + 文字"垂直风格
    * ================================================================ */
   /* ================================================================
-   * PikPak 助手入口：注入到 PikPak 官方侧边栏底部
-   * 仿照参考脚本「网盘文件批量重命名」的做法（enter-component 风格）
+   * PikPak 助手入口：单个蓝色 FAB 按钮"➕ PIKPAK助手"
+   * 仿照用户截图样式（蓝色 pill 形，半透明 + 图标 + 文字）
    * ================================================================ */
   const PP_QUICK_ENTRIES = [
     { panel: 'copy',   icon: '📋', label: '批量复制/移动', desc: '批量复制或移动到多个目标文件夹' },
@@ -3588,71 +3588,21 @@
   function injectQuickEntries() {
     if (document.getElementById('pp-quick-entries-wrap')) return;
 
-    // 寻找 PikPak 官方侧边栏的多种选择器（兼容旧/新版）
-    const sidebarSelectors = [
-      '.wp-s-aside-nav__main-top',  // 参考脚本用的 PikPak 侧边栏类名
-      '[class*="wp-s-aside-nav"]',
-      '[class*="aside-nav"]',
-      '[class*="sidebar"] nav',
-      'aside nav',
-      'nav[class*="aside"]',
-      'nav[class*="sidebar"]',
-    ];
-    let sidebar = null;
-    for (const sel of sidebarSelectors) {
-      const el = document.querySelector(sel);
-      if (el) { sidebar = el; break; }
-    }
+    // 单个 FAB 按钮：蓝色 pill 形，仿用户截图
+    const btn = document.createElement('button');
+    btn.id = 'pp-quick-entries-wrap';
+    btn.type = 'button';
+    btn.className = 'pp-quick-fab';
+    btn.title = '打开 PIKPAK助手';
+    btn.innerHTML =
+      '<span class="pp-quick-fab-ico">+</span>' +
+      '<span class="pp-quick-fab-txt">PIKPAK助手</span>';
 
-    if (!sidebar) {
-      // 找不到合适的侧边栏 → 降级为悬浮入口
-      return injectFloatingEntries();
-    }
-
-    // 在侧边栏底部添加 PikPak 助手入口区
-    const wrap = document.createElement('div');
-    wrap.id = 'pp-quick-entries-wrap';
-    wrap.className = 'pp-quick-wrap';
-    // 先加分隔线（仿参考脚本风格）
-    wrap.innerHTML = '<div class="pp-quick-divider"></div>' +
-      PP_QUICK_ENTRIES.map(function(e) {
-        return '<button type="button" class="pp-quick-item" data-panel="' + e.panel + '" title="' + e.desc + '">' +
-          '<span class="pp-quick-icon">' + e.icon + '</span>' +
-          '<span class="pp-quick-label">' + e.label + '</span>' +
-        '</button>';
-      }).join('');
-    sidebar.appendChild(wrap);
-
-    // 绑定点击：展开悬浮窗 + 切到对应 tab
-    wrap.querySelectorAll('.pp-quick-item').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        if (ui.panel && ui.panel.classList.contains('hidden')) openPanel();
-        if (ui.shadowRoot) switchPanelMode(btn.dataset.panel);
-      });
-    });
-  }
-
-  // 降级方案：找不到官方侧边栏时，浮在屏幕左侧
-  function injectFloatingEntries() {
-    if (document.getElementById('pp-quick-entries-wrap')) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'pp-quick-entries-wrap';
-    wrap.style.cssText = 'position:fixed;left:12px;top:50%;transform:translateY(-50%);width:200px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;z-index:999998;font-family:system-ui;';
-    wrap.innerHTML =
-      '<div style="padding:6px 10px;font-size:12px;font-weight:600;color:#2f54eb;">PIKPAK助手</div>' +
-      PP_QUICK_ENTRIES.map(function(e) {
-        return '<button type="button" class="pp-quick-item" data-panel="' + e.panel + '" title="' + e.desc + '" ' +
-          'style="display:flex;flex-direction:row;align-items:center;gap:8px;width:100%;padding:8px 10px;color:#2f54eb;border-radius:6px;border:none;background:transparent;cursor:pointer;font:500 13px/1 system-ui;text-align:left;">' +
-          '<span style="font-size:18px;">' + e.icon + '</span>' +
-          '<span>' + e.label + '</span>' +
-        '</button>';
-      }).join('');
-    document.body.appendChild(wrap);
-    wrap.querySelectorAll('.pp-quick-item').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        if (ui.panel && ui.panel.classList.contains('hidden')) openPanel();
-        if (ui.shadowRoot) switchPanelMode(btn.dataset.panel);
-      });
+    document.body.appendChild(btn);
+    btn.addEventListener('click', function() {
+      if (!ui.panel) return;
+      if (ui.panel.classList.contains('hidden')) openPanel();
+      else closePanel();
     });
   }
 
