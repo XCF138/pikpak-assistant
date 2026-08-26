@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.20.0
+// @version      1.21.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -116,27 +116,28 @@
 
   /* ================================================================
    * 注入 PikPak 左侧入口的样式（不能用 Shadow DOM 隔离）
-   * 严格对齐官方侧边栏项：透明背景、左边小图标、右边文字
+   * 作为官方侧边栏 <ol> 里的 <li> 并列显示：透明背景、图标+文字
    * ================================================================ */
   const PP_QUICK_CSS = `
-    /* 入口容器：在官方侧边栏里时占满整行 */
-    .pp-quick-entry { width: 100%; box-sizing: border-box; }
-    .pp-quick-entry-btn {
+    /* <li> 在官方列表里，不额外加 margin/padding */
+    .pp-quick-entry-li { list-style: none; margin: 0; padding: 0; }
+    /* <a> 严格仿官方项：透明背景、左边图标、右边文字 */
+    .pp-quick-entry-a {
       display: flex; align-items: center; gap: 12px;
-      width: 100%; min-height: 40px; padding: 9px 16px;
-      color: #2c3e50; cursor: pointer;
-      border-radius: 8px; background-color: transparent; border: none;
+      padding: 9px 16px; min-height: 40px;
+      color: #4e5969; text-decoration: none; cursor: pointer;
+      border-radius: 8px; background-color: transparent;
       font: 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      text-align: left; transition: background-color .15s;
+      transition: background-color .15s;
     }
-    .pp-quick-entry-btn:hover { background-color: #f5f6fa; }
-    .pp-quick-entry-btn:active { background-color: #eff1f5; }
+    .pp-quick-entry-a:hover { background-color: #f5f6fa; }
+    .pp-quick-entry-a:active { background-color: #eff1f5; }
     /* 左边的小图标：透明背景、与官方图标对齐 */
     .pp-quick-entry-ico {
       flex: none; width: 20px; height: 20px;
       display: flex; align-items: center; justify-content: center;
       color: #3b6bff; background-color: transparent;
-      font-size: 18px; font-weight: 700; line-height: 1;
+      font-size: 17px; font-weight: 700; line-height: 1;
     }
     /* 图标后面的文字 */
     .pp-quick-entry-txt {
@@ -150,7 +151,7 @@
       z-index: 999998; width: auto; background: #fff; border-radius: 10px;
       box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 0;
     }
-    .pp-quick-fallback-left .pp-quick-entry-btn { width: auto; }
+    .pp-quick-fallback-left .pp-quick-entry-a { width: auto; }
   `;
 
   // Hook 网页的 fetch，捕获 PikPak 自己生成的 captcha init 请求模板和当前使用的 captcha token
@@ -828,20 +829,8 @@
     .pp-rn-pv-row .done-ok { color: #00b42a; }
     .pp-rn-pv-row .done-fail { color: #f53f3f; }
     .pp-depth-hint { font-size: 11px; color: #86909c; }
-    .pp-steps { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
-    .pp-step { display: flex; align-items: center; gap: 5px; font-size: 12px; color: rgba(255,255,255,.62); white-space: nowrap; }
-    .pp-step i {
-      font-style: normal; width: 17px; height: 17px; border-radius: 50%;
-      background: rgba(255,255,255,.18); color: #fff; font-size: 11px;
-      display: inline-flex; align-items: center; justify-content: center;
-    }
-    .pp-step.active { color: #fff; font-weight: 600; }
-    .pp-step.active i { background: #fff; color: #2f54eb; }
-    .pp-step.done i { background: rgba(255,255,255,.92); color: #00b42a; }
-    .pp-step-line { flex: 1; height: 1px; background: rgba(255,255,255,.28); }
-
-    .pp-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-    .pp-page { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 10px 12px 12px; gap: 8px; }
+    .pp-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 10px 12px 12px; gap: 8px; }
+    .pp-page { flex: 1; display: flex; flex-direction: column; overflow: hidden; gap: 8px; }
 
     /* ---- 工具栏 / 面包屑 ---- */
     .pp-toolbar { display: flex; gap: 8px; align-items: center; }
@@ -1044,13 +1033,6 @@
           <span class="pp-author pp-author-big" id="pp-author">
             by <a href="https://github.com/XCF138/pikpak-assistant" target="_blank" rel="noopener">XCF138</a>
           </span>
-        </div>
-        <div class="pp-steps" id="pp-steps">
-          <div class="pp-step active" data-n="1"><i>1</i>选源</div>
-          <div class="pp-step-line"></div>
-          <div class="pp-step" data-n="2"><i>2</i>选目标</div>
-          <div class="pp-step-line"></div>
-          <div class="pp-step" data-n="3"><i>3</i>执行</div>
         </div>
       </div>
 
@@ -1963,8 +1945,6 @@
     ui.dupBody.classList.toggle('hidden', mode !== 'dup');
     ui.treeBody.classList.toggle('hidden', mode !== 'tree');
     ui.renameBody.classList.toggle('hidden', mode !== 'rename');
-    // 步骤指示器只在 copy 模式显示
-    ui.stepsEl.classList.toggle('hidden', mode !== 'copy');
     // 首次进入 manage 模式时加载
     if (mode === 'manage' && !state.manageBrowse.inited) {
       state.manageBrowse.inited = true;
@@ -2554,11 +2534,6 @@
     for (const i of [1, 2, 3]) {
       $('pp-page' + i).classList.toggle('hidden', i !== n);
     }
-    ui.shadowRoot.querySelectorAll('.pp-step').forEach((el) => {
-      const s = Number(el.dataset.n);
-      el.classList.toggle('active', s === n);
-      el.classList.toggle('done', s < n);
-    });
     if (n === 3) renderSummary();
   }
 
@@ -3557,71 +3532,75 @@
 
   /* ================================================================
    * PikPak 助手入口（左侧）
-   * 形态：官方侧边栏项的模式 —— 左边一个小图标，右边是字（水平排列）
-   * 位置优先级：
-   *   1) 注入到 PikPak 官方左侧侧边栏容器 .wp-s-aside-nav__main-top（与官方项完全并排）
-   *   2) 若侧边栏尚未渲染，立即在屏幕最左侧显示一个固定入口（不再干等）
-   * 关键修复：
-   *   - 用唯一 id（pikpak-assistant-entry），避免与旧版脚本的 pp-quick-entries-wrap 冲突
-   *   - 初始化时清除旧版可能残留的右下角 FAB（类名 .pp-quick-fab）
+   * 形态：跟「已加星标」等官方项完全并列 —— 作为 <li> 插入到 PikPak
+   * 官方侧边栏的 <ol> 列表末尾，图标在左、文字在右，透明背景。
+   * 若侧边栏尚未渲染，则先固定在屏幕最左侧显示，渲染完成后再移进列表。
    * ================================================================ */
-  function buildEntryButton() {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pp-quick-entry-btn';
-    btn.title = '打开 / 收起 PIKPAK 助手';
-    btn.innerHTML =
+  function buildEntryContent() {
+    const a = document.createElement('a');
+    a.className = 'pp-quick-entry-a';
+    a.href = 'javascript:void(0)';
+    a.title = '打开 / 收起 PIKPAK 助手';
+    a.innerHTML =
       '<span class="pp-quick-entry-ico">P</span>' +
       '<span class="pp-quick-entry-txt">PIKPAK</span>';
-    btn.addEventListener('click', function() {
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
       if (!ui.panel) return;
       if (ui.panel.classList.contains('hidden')) openPanel();
       else closePanel();
     });
-    return btn;
+    return a;
   }
 
-  function getSidebar() {
-    return document.querySelector('.wp-s-aside-nav__main-top')
+  // 找到官方侧边栏里的 <ol> 列表容器
+  function getSidebarList() {
+    const nav = document.querySelector('.wp-s-aside-nav__main-top')
       || document.querySelector('[class*="wp-s-aside-nav"]')
       || document.querySelector('[class*="aside-nav"]')
       || document.querySelector('nav[class*="sidebar"]');
+    if (!nav) return null;
+    // 优先返回 nav 里的 <ol>，没有则返回 nav 本身兜底
+    return nav.querySelector('ol') || nav;
   }
 
-  // 把入口放进官方侧边栏；若已在侧边栏则不动，若在降级位置则移入
+  // 把入口作为 <li> 放进官方侧边栏 <ol>；若已在其中则不动
   function upgradeToSidebar() {
     const existing = document.getElementById('pikpak-assistant-entry');
-    const sidebar = getSidebar();
-    if (!sidebar) return false;
-    if (existing) {
-      if (existing.parentNode === sidebar) return true;
-      existing.classList.remove('pp-quick-fallback-left');
-      sidebar.appendChild(existing); // 从屏幕左侧移到官方侧边栏
+    const list = getSidebarList();
+    if (!list) return false;
+    if (existing && existing.tagName === 'LI') {
+      if (existing.parentNode === list) return true;
+      list.appendChild(existing);
       return true;
     }
-    const wrap = document.createElement('div');
-    wrap.id = 'pikpak-assistant-entry';
-    wrap.className = 'pp-quick-entry';
-    wrap.appendChild(buildEntryButton());
-    sidebar.appendChild(wrap);
+    // 如果之前是降级 div，先删掉
+    if (existing) existing.remove();
+    const li = document.createElement('li');
+    li.id = 'pikpak-assistant-entry';
+    li.className = 'pp-quick-entry-li';
+    li.appendChild(buildEntryContent());
+    list.appendChild(li);
     return true;
   }
 
-  // 立即在屏幕最左侧显示一个固定入口（保证秒出，不干等侧边栏）
+  // 侧边栏还没渲染时，先在屏幕最左侧显示一个固定入口
   function showFallbackLeft() {
     if (document.getElementById('pikpak-assistant-entry')) return;
     const wrap = document.createElement('div');
     wrap.id = 'pikpak-assistant-entry';
     wrap.className = 'pp-quick-entry pp-quick-fallback-left';
-    wrap.appendChild(buildEntryButton());
+    const a = buildEntryContent();
+    a.className = a.className + ' pp-quick-entry-btn';
+    wrap.appendChild(a);
     document.body.appendChild(wrap);
   }
 
   function startSidebarInjection() {
-    // 1) 先尝试放进官方侧边栏；放不进就立刻在左侧显示固定入口
+    // 1) 先尝试放进官方侧边栏列表；放不进就立刻在左侧显示固定入口
     if (!upgradeToSidebar()) showFallbackLeft();
 
-    // 2) 持续轮询，等官方侧边栏渲染出来后把入口移进去（最多 ~12s）
+    // 2) 持续轮询，等官方侧边栏渲染出来后把入口移进 <ol>（最多 ~12s）
     let tries = 0;
     const timer = setInterval(function() {
       if (upgradeToSidebar() || ++tries >= 60) clearInterval(timer);
@@ -3729,7 +3708,6 @@
       next2: shadowRoot.getElementById('pp-next2'),
       selectAll2: shadowRoot.getElementById('pp-selectall2'),
       invert2: shadowRoot.getElementById('pp-invert2'),
-      stepsEl: shadowRoot.getElementById('pp-steps'),
       copyBody: shadowRoot.getElementById('pp-copy-body'),
       treeBody: shadowRoot.getElementById('pp-tree-body'),
       bcTree: shadowRoot.getElementById('pp-bc-tree'),
