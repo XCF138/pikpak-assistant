@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.9.0
-// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（哈希+大小分组，可搜索筛选，一键去重）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
+// @version      1.10.0
+// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（套用增强大师算法：精准匹配+视频时长相似+名称相似，可选递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
 // @supportURL   https://github.com/XCF138/pikpak-assistant/issues
@@ -725,9 +725,12 @@
     }
     .pp-mini-btn:hover { background: #fff; color: #2f54eb; border-color: #fff; }
     .pp-sub { font-size: 12px; color: rgba(255,255,255,.78); margin-top: 4px; }
-    .pp-author { margin-left: 6px; font-size: 11px; }
+    .pp-author { font-size: 11px; }
     .pp-author a { color: rgba(255,255,255,.9); text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,.45); }
     .pp-author a:hover { color: #fff; border-bottom-color: #fff; }
+    .pp-author-big { display: inline-block; font-size: 15px; font-weight: 700; color: #fff; }
+    .pp-author-big a { color: #fff; text-decoration: none; border-bottom: 2px solid rgba(255,255,255,.55); padding-bottom: 1px; }
+    .pp-author-big a:hover { border-bottom-color: #fff; }
 
     /* ---- 功能导航（分段控件卡片）---- */
     .pp-panel-tabs {
@@ -999,8 +1002,7 @@
           </span>
         </div>
         <div class="pp-sub">
-          批量复制/移动 · 文件整理 · 目录树 · 批量重命名 · 文件查重
-          <span class="pp-author" id="pp-author">
+          <span class="pp-author pp-author-big" id="pp-author">
             by <a href="https://github.com/XCF138/pikpak-assistant" target="_blank" rel="noopener">XCF138</a>
           </span>
         </div>
@@ -1280,8 +1282,25 @@
           <div class="pp-bc" id="pp-bc-dup"></div>
           <input class="pp-search" id="pp-search-dup" placeholder="搜索重复文件名…">
         </div>
+        <div class="pp-rn-rules" style="border-radius:8px;margin-top:8px;">
+          <div class="pp-rn-rule-row" style="gap:14px;flex-wrap:wrap;">
+            <label style="width:auto;flex:none;">算法</label>
+            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
+            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-sim" checked> 视频时长相似</label>
+            <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-name" checked> 名称相似</label>
+          </div>
+          <div class="pp-rn-rule-row">
+            <label>相似阈值</label>
+            <select id="pp-dup-strict">
+              <option value="loose">宽松（推荐，召回高）</option>
+              <option value="normal">标准</option>
+              <option value="strict">严格（仅高度相似）</option>
+            </select>
+            <label class="pp-rn-check" style="margin-left:auto;"><input type="checkbox" id="pp-dup-recursive" checked> 递归扫描子文件夹</label>
+          </div>
+        </div>
         <div class="pp-footer" style="padding-bottom:0;">
-          <span class="pp-note" id="pp-dup-note">扫描当前文件夹，按「哈希+大小」找出重复文件，每组保留时间最新的一个</span>
+          <span class="pp-note" id="pp-dup-note">对当前文件夹（可勾选递归子文件夹）执行文件查重</span>
           <button class="pp-btn pp-btn-primary" id="pp-dup-scan">🔍 扫描查重</button>
         </div>
         <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;margin-top:8px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
@@ -1324,9 +1343,10 @@
     manageResults: null,       // 执行结果 [{label, ok, msg}]
     // 文件查重模式（独立）
     dupBrowse: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0, inited: false },
-    dupGroups: null,           // 查重结果：[[{id,name,size}, ...], ...] 每组为重复项
+    dupGroups: null,           // 查重结果：[{type, label, items: [...]}] 每组为重复项
     dupScanning: false,
     dupFilter: '',             // 查重结果搜索关键字
+    dupStopRequested: false,   // 递归扫描时是否请求停止
     running: false,
     stopRequested: false,
     results: [],
@@ -2019,31 +2039,194 @@
     }
   }
 
-  // 查重：按 哈希+大小 分组，找出组内 >1 的重复项
-  function buildDupGroups() {
-    const b = state.dupBrowse;
-    if (!b.data) return [];
-    const allFiles = b.data.files || [];
-    const byKey = new Map();
-    for (const f of allFiles) {
-      const hash = f.gcid || f.md5_checksum || f.hash;
-      const key = hash ? (String(hash) + '|' + String(f.size)) : null;
-      if (!key) continue; // 无哈希信息的文件跳过（多为未完成/特殊文件）
-      if (!byKey.has(key)) byKey.set(key, []);
-      byKey.get(key).push(f);
+  // 递归收集当前文件夹（及子文件夹）下所有文件，含子文件夹项
+  // 每项：{id, name, size, time, hash, mime, duration, parentPath, isFolder}
+  async function collectDupItems(folderId, parentPath, depth, maxDepth, out, isRecursive, statusFn) {
+    let data;
+    try {
+      data = await listFiles(folderId);
+    } catch (e) {
+      if (statusFn) statusFn(folderId, parentPath, 0, e.message);
+      return;
     }
-    const groups = [];
-    byKey.forEach(function(list) {
-      if (list.length > 1) {
-        groups.push(list.map(function(f) {
-          return { id: f.id, name: f.name, size: f.size, time: f.modified_time };
-        }));
+    const folders = data.folders || [];
+    const files = data.files || [];
+    for (const f of folders) {
+      out.push({ id: f.id, name: f.name, isFolder: true, parentPath: parentPath, time: f.modified_time });
+    }
+    for (const fi of files) {
+      const dur = parseFloat((fi.params && fi.params.duration) || 0);
+      out.push({
+        id: fi.id,
+        name: fi.name,
+        isFolder: false,
+        size: parseInt(fi.size || 0),
+        time: fi.modified_time,
+        hash: fi.gcid || fi.md5_checksum || fi.hash || '',
+        mime: fi.mime_type || '',
+        duration: dur,
+        parentPath: parentPath,
+      });
+    }
+    if (statusFn) statusFn(folderId, parentPath, files.length, null);
+    if (isRecursive && depth < maxDepth) {
+      for (const sub of folders) {
+        if (state.dupStopRequested) break;
+        await collectDupItems(sub.id, parentPath ? parentPath + '/' + sub.name : sub.name, depth + 1, maxDepth, out, isRecursive, statusFn);
       }
-    });
-    // 组内按修改时间倒序（最新的排前面，作为「保留」候选）
-    groups.forEach(function(g) {
-      g.sort(function(a, b) { return (b.time || '').localeCompare(a.time || ''); });
-    });
+    }
+  }
+
+  // 清理文件名：去扩展名、去除括号内容、尾部「副本/复制/copy」等（套用增强大师 cleanNameAd）
+  function cleanNameForDup(name, strictness) {
+    if (!name) return '';
+    let s = String(name);
+    // 先去扩展名（先去掉才能让"副本"等末尾模式匹配到）
+    const lastDot = s.lastIndexOf('.');
+    if (lastDot > 0) s = s.substring(0, lastDot);
+    // 配对去除半角/全角括号及其内容（保留配对成功的版本号以区分(1)/(2)）
+    const pairs = [['(', ')'], ['（', '）'], ['[', ']'], ['【', '】']];
+    for (const [L, R] of pairs) {
+      const chars = s.split('');
+      const stack = [];
+      const toRemove = new Set();
+      for (let i = 0; i < chars.length; i++) {
+        if (chars[i] === L) stack.push(i);
+        else if (chars[i] === R) {
+          if (stack.length > 0) stack.pop();
+          else toRemove.add(i);
+        }
+      }
+      stack.forEach((i) => toRemove.add(i));
+      if (toRemove.size > 0) s = chars.filter((_, i) => !toRemove.has(i)).join('');
+    }
+    // 去除尾部 副本/复制/copy + 可选数字/括号数字
+    s = s.replace(/\s*[-_ .．。]*\s*(?:\(\s*\d+\s*\)|（\s*\d+\s*）|\[\s*\d+\s*\]|【\s*\d+\s*】)\s*$/u, '').trim();
+    s = s.replace(/\s*(?:[-_ .．。]*\s*)?(?:副本|复制|拷贝|拷貝|コピー|複製|복사본|사본|복사)\s*(?:\d+|\(\s*\d+\s*\)|（\s*\d+\s*）|\[\s*\d+\s*\]|【\s*\d+\s*】)?\s*$/u, '').trim();
+    s = s.replace(/\s*[-_ .．。]+\s*(?:copy|duplicate|dup|salinan|salin|duplikat)\s*(?:\d+|\(\s*\d+\s*\)|（\s*\d+\s*）|\[\s*\d+\s*\]|【\s*\d+\s*】)?\s*$/i, '').trim();
+    let result = s.toLowerCase();
+    if (strictness === 'loose') {
+      // 宽松：只保留中文、英文、数字
+      result = result.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+    }
+    return result;
+  }
+
+  // 查重：套用增强大师三种算法（精准匹配 + 视频时长相似 + 名称相似）
+  // algoOpts: { hash, sim, name, strict, recursive, maxDepth, maxItems }
+  async function buildDupGroups(algoOpts) {
+    algoOpts = algoOpts || {};
+    const useHash = algoOpts.hash !== false;
+    const useSim = algoOpts.sim !== false;
+    const useName = algoOpts.name !== false;
+    const strictness = algoOpts.strict || 'normal';
+    const isRecursive = algoOpts.recursive !== false;
+    const maxDepth = algoOpts.maxDepth || 4;
+    const maxItems = algoOpts.maxItems || 3000;
+    const sizeRatioLimit = strictness === 'loose' ? 0.15 : (strictness === 'strict' ? 0.03 : 0.08);
+    const durThreshold = strictness === 'loose' ? 5.0 : (strictness === 'strict' ? 1.5 : 3.0);
+
+    // 1) 收集所有文件项（可能含子文件夹）
+    const allItems = [];
+    const rootStack = state.dupBrowse.stack || [{ id: '', name: '根目录' }];
+    const rootId = rootStack[rootStack.length - 1].id;
+    await collectDupItems(rootId, '', 0, maxDepth, allItems, isRecursive, function() {}, maxItems);
+    const candidates = allItems.filter(function(x) { return !x.isFolder; });
+    if (candidates.length > maxItems) {
+      candidates.length = maxItems; // 防御性截断
+    }
+
+    const groups = []; // [{items: [{...}], type: 'hash'|'sim'|'name'}]
+    const assigned = new Set();
+
+    // 2) 精准匹配（hash|size）
+    if (useHash) {
+      const byKey = new Map();
+      for (const f of candidates) {
+        if (assigned.has(f.id) || !f.hash) continue;
+        const key = String(f.hash) + '|' + String(f.size);
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(f);
+      }
+      for (const list of byKey.values()) {
+        if (list.length > 1) {
+          const sorted = list.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+          sorted.forEach(x => assigned.add(x.id));
+          groups.push({ type: 'hash', label: '精准匹配', items: sorted });
+        }
+      }
+    }
+
+    // 3) 视频时长相似（仅 mime 视频，按 duration 排序，相近时长 + 相近大小）
+    if (useSim) {
+      const simCandidates = candidates.filter(function(x) { return !assigned.has(x.id) && /^video\//.test(x.mime || ''); });
+      const withDur = simCandidates.filter(function(x) { return x.duration > 0; });
+      withDur.sort(function(a, b) { return a.duration - b.duration; });
+      for (let i = 0; i < withDur.length; i++) {
+        if (assigned.has(withDur[i].id)) continue;
+        const root = withDur[i];
+        const rootSize = root.size;
+        const group = [root];
+        for (let j = i + 1; j < withDur.length; j++) {
+          const t = withDur[j];
+          if (assigned.has(t.id)) continue;
+          if (Math.abs(t.duration - root.duration) > durThreshold) break;
+          if (rootSize > 0 && t.size > 0) {
+            const diff = Math.abs(t.size - rootSize);
+            const ratio = diff / Math.max(t.size, rootSize);
+            if (ratio <= 0.10) group.push(t);
+          }
+        }
+        if (group.length > 1) {
+          const sorted = group.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+          sorted.forEach(x => assigned.add(x.id));
+          groups.push({ type: 'sim', label: '视频时长相似', items: sorted });
+        }
+      }
+    }
+
+    // 4) 名称相似（剩余未分配，按 mime 类型 + 清理后文件名 + size 比例聚类）
+    if (useName) {
+      const remaining = candidates.filter(function(x) { return !assigned.has(x.id); });
+      const typeNameMap = new Map();
+      for (const f of remaining) {
+        const tGroup = /^video\//.test(f.mime) ? 'video' : (/^image\//.test(f.mime) ? 'image' : 'other');
+        const cleaned = cleanNameForDup(f.name, strictness);
+        if (!cleaned) continue;
+        const key = tGroup + '|' + cleaned;
+        if (!typeNameMap.has(key)) typeNameMap.set(key, []);
+        typeNameMap.get(key).push(f);
+      }
+      for (const items of typeNameMap.values()) {
+        if (items.length < 2) continue;
+        const sorted = items.slice().sort(function(a, b) { return a.size - b.size; });
+        let current = [sorted[0]];
+        const subGroups = [];
+        for (let j = 1; j < sorted.length; j++) {
+          const t = sorted[j];
+          const root = current[0];
+          let match = false;
+          if (root.size === 0 && t.size === 0) match = true;
+          else if (root.size > 0 && t.size > 0) {
+            const diff = Math.abs(t.size - root.size);
+            const ratio = diff / Math.max(t.size, root.size);
+            if (ratio <= sizeRatioLimit) match = true;
+          }
+          if (match) current.push(t);
+          else {
+            if (current.length > 1) subGroups.push(current);
+            current = [t];
+          }
+        }
+        if (current.length > 1) subGroups.push(current);
+        for (const sg of subGroups) {
+          const sorted2 = sg.slice().sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+          sorted2.forEach(x => assigned.add(x.id));
+          groups.push({ type: 'name', label: '名称相似', items: sorted2 });
+        }
+      }
+    }
+
     return groups;
   }
 
@@ -2051,7 +2234,7 @@
     const panel = ui.dupPanel;
     const groups = state.dupGroups || [];
     if (!groups || groups.length === 0) {
-      panel.innerHTML = '<div class="pp-hint">' + (state.dupScanning ? '正在扫描…' : '当前文件夹未发现重复文件（没有哈希+大小完全相同的文件）') + '</div>';
+      panel.innerHTML = '<div class="pp-hint">' + (state.dupScanning ? '正在扫描…' : '未发现重复文件（按所选算法+阈值在当前范围内未匹配到）') + '</div>';
       return;
     }
     // 搜索过滤：按文件名关键字过滤组
@@ -2059,25 +2242,27 @@
     let shown = groups;
     if (kw) {
       shown = groups.filter(function(g) {
-        return g.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
+        return g.items.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
       });
     }
     if (shown.length === 0) {
       panel.innerHTML = '<div class="pp-hint">没有匹配「' + esc(state.dupFilter) + '」的重复组</div>';
       return;
     }
-    let html = '<div class="pp-hint" style="padding:8px;">找到 <b>' + groups.length + '</b> 组重复文件（共 ' +
-      groups.reduce(function(s, g) { return s + g.length; }, 0) + ' 个文件）' +
+    let totalFiles = 0;
+    for (const g of groups) totalFiles += g.items.length;
+    let html = '<div class="pp-hint" style="padding:8px;">找到 <b>' + groups.length + '</b> 组重复文件（共 ' + totalFiles + ' 个文件）' +
       (kw ? '，当前筛选出 <b>' + shown.length + '</b> 组' : '') +
       '。每组仅保留时间最新的一个，其余移到回收站。</div>';
     shown.forEach(function(g, gi) {
-      const base = g[0];
-      html += '<div class="pp-sum-head">重复组 ' + (gi + 1) + '：' + esc(base.name) + '（' + fmtSize(base.size) + '，共 ' + g.length + ' 个）</div>';
-      g.forEach(function(f, fi) {
+      const base = g.items[0];
+      html += '<div class="pp-sum-head">重复组 ' + (gi + 1) + '：' + esc(base.name) + '（' + esc(g.label) + ' · ' + fmtSize(base.size) + '，共 ' + g.items.length + ' 个）</div>';
+      g.items.forEach(function(f, fi) {
         const keep = fi === 0;
+        const pathText = f.parentPath ? '📁 ' + esc(f.parentPath) + ' · ' : '';
         html += '<div class="pp-rn-pv-row' + (keep ? ' skip' : '') + '">' +
           '<span class="pp-rn-pv-state">' + (keep ? '⭐' : '') + '</span>' +
-          '<span class="pp-rn-pv-old" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+          '<span class="pp-rn-pv-old" title="' + esc(f.name) + '">' + pathText + esc(f.name) + '</span>' +
           '<span class="pp-rn-pv-new">' + (keep ? '保留' : '→ 回收站') + '</span>' +
           '</div>';
       });
@@ -2095,11 +2280,11 @@
     const kw = (state.dupFilter || '').trim().toLowerCase();
     // 若在搜索过滤状态，只清理筛选出的组
     const scope = kw ? groups.filter(function(g) {
-      return g.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
+      return g.items.some(function(f) { return String(f.name || '').toLowerCase().indexOf(kw) !== -1; });
     }) : groups;
     const toDelete = [];
     scope.forEach(function(g) {
-      for (let i = 1; i < g.length; i++) toDelete.push(g[i].id);
+      for (let i = 1; i < g.items.length; i++) toDelete.push(g.items[i].id);
     });
     if (toDelete.length === 0) return;
     if (!window.confirm('确定要把 ' + toDelete.length + ' 个重复文件移到回收站吗？\n\n每组只保留时间最新的一个，其余全部移入回收站（可恢复）。')) return;
@@ -2130,11 +2315,19 @@
     state.dupScanning = true;
     state.dupFilter = '';
     if (ui.dupSearch) ui.dupSearch.value = '';
-    ui.dupNote.textContent = '正在扫描当前文件夹查重…';
+    const recursive = ui.dupRecursive ? ui.dupRecursive.checked : true;
+    const useHash = ui.dupAlgoHash ? ui.dupAlgoHash.checked : true;
+    const useSim = ui.dupAlgoSim ? ui.dupAlgoSim.checked : true;
+    const useName = ui.dupAlgoName ? ui.dupAlgoName.checked : true;
+    const strictness = ui.dupStrict ? ui.dupStrict.value : 'normal';
+    ui.dupNote.textContent = '正在扫描' + (recursive ? '（含子文件夹）' : '当前文件夹') + '查重…';
     ui.dupPanel.innerHTML = '<div class="pp-hint">正在扫描…</div>';
     await sleep(50); // 让 UI 先刷新
     try {
-      state.dupGroups = buildDupGroups();
+      state.dupGroups = await buildDupGroups({
+        hash: useHash, sim: useSim, name: useName, strict: strictness,
+        recursive: recursive,
+      });
     } catch (e) {
       state.dupGroups = null;
       ui.dupNote.textContent = '查重失败：' + (e.message || String(e));
@@ -2142,9 +2335,10 @@
     state.dupScanning = false;
     renderDupGroups();
     if (state.dupGroups && state.dupGroups.length === 0) {
-      ui.dupNote.textContent = '未发现重复文件（当前文件夹内没有哈希+大小完全相同的文件）';
+      ui.dupNote.textContent = '未发现重复文件（按所选算法在扫描范围内未匹配到）';
     } else if (state.dupGroups) {
-      ui.dupNote.textContent = '找到 ' + state.dupGroups.length + ' 组重复文件，可输入关键字筛选';
+      let total = 0; for (const g of state.dupGroups) total += g.items.length;
+      ui.dupNote.textContent = '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件），可输入关键字筛选';
     }
   }
 
@@ -3224,6 +3418,11 @@
       dupPanel: shadowRoot.getElementById('pp-dup-panel'),
       dupNote: shadowRoot.getElementById('pp-dup-note'),
       dupScan: shadowRoot.getElementById('pp-dup-scan'),
+      dupAlgoHash: shadowRoot.getElementById('pp-dup-algo-hash'),
+      dupAlgoSim: shadowRoot.getElementById('pp-dup-algo-sim'),
+      dupAlgoName: shadowRoot.getElementById('pp-dup-algo-name'),
+      dupStrict: shadowRoot.getElementById('pp-dup-strict'),
+      dupRecursive: shadowRoot.getElementById('pp-dup-recursive'),
     };
 
     bindEvents();
