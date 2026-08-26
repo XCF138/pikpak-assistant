@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.10.0
-// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（套用增强大师算法：精准匹配+视频时长相似+名称相似，可选递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
+// @version      1.11.0
+// @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
 // @supportURL   https://github.com/XCF138/pikpak-assistant/issues
@@ -1280,7 +1280,15 @@
       <div class="pp-body hidden" id="pp-dup-body">
         <div class="pp-toolbar">
           <div class="pp-bc" id="pp-bc-dup"></div>
+          <div class="pp-tbar-btns">
+            <button class="pp-tbar-btn" id="pp-dup-foldermode" title="进入勾选子文件夹模式：可多选要扫的文件夹">📂 选目录</button>
+          </div>
           <input class="pp-search" id="pp-search-dup" placeholder="搜索重复文件名…">
+        </div>
+        <div class="pp-chips hidden" id="pp-dup-checked-chips" style="padding:6px 8px;">
+          <span class="pp-note" style="margin-right:4px;">已选 <b id="pp-dup-checked-count">0</b> 个文件夹：</span>
+          <span id="pp-dup-checked-list"></span>
+          <button class="pp-tbar-btn" id="pp-dup-checked-clear" style="margin-left:auto;">清空</button>
         </div>
         <div class="pp-rn-rules" style="border-radius:8px;margin-top:8px;">
           <div class="pp-rn-rule-row" style="gap:14px;flex-wrap:wrap;">
@@ -1300,7 +1308,7 @@
           </div>
         </div>
         <div class="pp-footer" style="padding-bottom:0;">
-          <span class="pp-note" id="pp-dup-note">对当前文件夹（可勾选递归子文件夹）执行文件查重</span>
+          <span class="pp-note" id="pp-dup-note">对当前文件夹执行文件查重；如需限定范围，点「📂 选目录」勾选子文件夹</span>
           <button class="pp-btn pp-btn-primary" id="pp-dup-scan">🔍 扫描查重</button>
         </div>
         <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;margin-top:8px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
@@ -1347,6 +1355,8 @@
     dupScanning: false,
     dupFilter: '',             // 查重结果搜索关键字
     dupStopRequested: false,   // 递归扫描时是否请求停止
+    dupFolderMode: false,      // 是否处于"勾选子文件夹"浏览模式
+    dupCheckedFolders: [],     // 已勾选的子文件夹 [{id, name, path}]
     running: false,
     stopRequested: false,
     results: [],
@@ -2114,6 +2124,71 @@
 
   // 查重：套用增强大师三种算法（精准匹配 + 视频时长相似 + 名称相似）
   // algoOpts: { hash, sim, name, strict, recursive, maxDepth, maxItems }
+  function pathOfDupStack(stack) {
+    if (!stack || stack.length === 0) return '';
+    return stack.map(function(s) { return s.name; }).join('/');
+  }
+
+  function renderDupCheckedChips() {
+    const wrap = ui.dupCheckedChips;
+    if (!wrap) return;
+    if (state.dupCheckedFolders.length === 0) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    ui.dupCheckedCount.textContent = String(state.dupCheckedFolders.length);
+    ui.dupCheckedList.innerHTML = state.dupCheckedFolders.map(function(f, i) {
+      return '<span class="pp-chip">📁 ' + esc(f.path) + '<button data-rmdupcheck="' + i + '">×</button></span>';
+    }).join('');
+    // 单个删除
+    wrap.querySelectorAll('[data-rmdupcheck]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const i = Number(btn.dataset.rmdupcheck);
+        state.dupCheckedFolders.splice(i, 1);
+        renderDupCheckedChips();
+        renderDupFolderList();
+      });
+    });
+  }
+
+  function renderDupFolderList() {
+    if (!state.dupFolderMode) return;
+    const b = state.dupBrowse;
+    renderBreadcrumb(ui.bcDup, b);
+    if (b.loading) {
+      ui.dupPanel.innerHTML = '<div class="pp-hint">加载中…</div>';
+      return;
+    }
+    if (b.error) {
+      ui.dupPanel.innerHTML = '<div class="pp-hint error">' + esc(b.error) + '</div>';
+      return;
+    }
+    if (!b.data) {
+      ui.dupPanel.innerHTML = '<div class="pp-hint">准备就绪</div>';
+      return;
+    }
+    const kw = (state.dupFilter || '').trim().toLowerCase();
+    const folders = (b.data.folders || []).filter(function(f) {
+      return !kw || String(f.name || '').toLowerCase().indexOf(kw) !== -1;
+    });
+    if (folders.length === 0) {
+      ui.dupPanel.innerHTML = '<div class="pp-hint">此位置没有子文件夹</div>';
+      return;
+    }
+    let html = '<div class="pp-hint" style="padding:6px 10px;">勾选要扫的文件夹（点方框勾选/取消，点名称进入子文件夹）：</div>';
+    folders.forEach(function(f) {
+      const picked = state.dupCheckedFolders.some(function(x) { return x.id === f.id; });
+      html += '<div class="pp-row folder' + (picked ? ' picked' : '') + '" data-id="' + esc(f.id) + '" data-name="' + esc(f.name) + '" data-kind="folder">' +
+        '<span class="pp-pick" data-pick="1">' + (picked ? '✓' : '') + '</span>' +
+        '<span class="ico">📁</span>' +
+        '<span class="name" data-enter="1" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+        '<span class="arrow" data-enter="1">›</span></div>';
+    });
+    ui.dupPanel.innerHTML = html;
+  }
+
   async function buildDupGroups(algoOpts) {
     algoOpts = algoOpts || {};
     const useHash = algoOpts.hash !== false;
@@ -2128,9 +2203,20 @@
 
     // 1) 收集所有文件项（可能含子文件夹）
     const allItems = [];
-    const rootStack = state.dupBrowse.stack || [{ id: '', name: '根目录' }];
-    const rootId = rootStack[rootStack.length - 1].id;
-    await collectDupItems(rootId, '', 0, maxDepth, allItems, isRecursive, function() {}, maxItems);
+    const targets = algoOpts.targets; // [{id, name}] 可选：勾选的子文件夹列表
+    if (targets && targets.length > 0) {
+      // 模式 A：用户已勾选具体子文件夹 → 只扫这些（不递归）
+      for (const t of targets) {
+        if (state.dupStopRequested) break;
+        const pathLabel = t.path || t.name;
+        await collectDupItems(t.id, pathLabel, 0, 1, allItems, false, function() {});
+      }
+    } else {
+      // 模式 B：扫当前文件夹（可勾选递归子文件夹）
+      const rootStack = state.dupBrowse.stack || [{ id: '', name: '根目录' }];
+      const rootId = rootStack[rootStack.length - 1].id;
+      await collectDupItems(rootId, '', 0, maxDepth, allItems, isRecursive, function() {}, maxItems);
+    }
     const candidates = allItems.filter(function(x) { return !x.isFolder; });
     if (candidates.length > maxItems) {
       candidates.length = maxItems; // 防御性截断
@@ -2320,25 +2406,39 @@
     const useSim = ui.dupAlgoSim ? ui.dupAlgoSim.checked : true;
     const useName = ui.dupAlgoName ? ui.dupAlgoName.checked : true;
     const strictness = ui.dupStrict ? ui.dupStrict.value : 'normal';
-    ui.dupNote.textContent = '正在扫描' + (recursive ? '（含子文件夹）' : '当前文件夹') + '查重…';
+    // 扫描目标：勾选模式 > 勾选的子文件夹；非勾选模式 > 当前文件夹（可递归）
+    const useTargets = state.dupCheckedFolders.length > 0;
+    const targets = useTargets ? state.dupCheckedFolders.slice() : null;
+    ui.dupNote.textContent = useTargets
+      ? ('正在扫描已选 ' + targets.length + ' 个文件夹…')
+      : ('正在扫描' + (recursive ? '（含子文件夹）' : '当前文件夹') + '查重…');
     ui.dupPanel.innerHTML = '<div class="pp-hint">正在扫描…</div>';
     await sleep(50); // 让 UI 先刷新
     try {
       state.dupGroups = await buildDupGroups({
         hash: useHash, sim: useSim, name: useName, strict: strictness,
         recursive: recursive,
+        targets: targets,
       });
     } catch (e) {
       state.dupGroups = null;
       ui.dupNote.textContent = '查重失败：' + (e.message || String(e));
     }
     state.dupScanning = false;
+    // 扫描完退出选目录模式，回到结果展示
+    if (state.dupFolderMode) {
+      state.dupFolderMode = false;
+      ui.dupFolderMode.classList.remove('active');
+      ui.dupFolderMode.textContent = '📂 选目录';
+    }
+    renderDupCheckedChips();
     renderDupGroups();
     if (state.dupGroups && state.dupGroups.length === 0) {
       ui.dupNote.textContent = '未发现重复文件（按所选算法在扫描范围内未匹配到）';
     } else if (state.dupGroups) {
       let total = 0; for (const g of state.dupGroups) total += g.items.length;
-      ui.dupNote.textContent = '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件），可输入关键字筛选';
+      ui.dupNote.textContent = (useTargets ? '已扫 ' + targets.length + ' 个勾选文件夹：' : '') +
+        '找到 ' + state.dupGroups.length + ' 组（共 ' + total + ' 个文件），可输入关键字筛选';
     }
   }
 
@@ -2818,18 +2918,74 @@
     ui.manageExecute.addEventListener('click', executeManage);
 
     /* ---- 文件查重模式 ---- */
-    // 面包屑导航
+    // 面包屑导航（任何模式都生效）
     ui.bcDup.addEventListener('click', (e) => {
       const el = e.target.closest('.pp-crumb');
       if (!el || el.classList.contains('cur')) return;
       state.dupBrowse.stack = state.dupBrowse.stack.slice(0, Number(el.dataset.i) + 1);
       state.dupGroups = null;
-      loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
+      if (state.dupFolderMode) {
+        renderDupFolderList();
+      } else {
+        loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
+        ui.dupPanel.innerHTML = '<div class="pp-hint">面包屑已切换（不再勾选子文件夹扫描），点击「扫描查重」开始</div>';
+      }
     });
     // 搜索过滤重复组
     ui.dupSearch.addEventListener('input', () => {
       state.dupFilter = ui.dupSearch.value;
-      renderDupGroups();
+      if (state.dupFolderMode) {
+        renderDupFolderList();
+      } else {
+        renderDupGroups();
+      }
+    });
+    // 切换"勾选子文件夹"模式
+    ui.dupFolderMode.addEventListener('click', () => {
+      state.dupFolderMode = !state.dupFolderMode;
+      ui.dupFolderMode.classList.toggle('active', state.dupFolderMode);
+      ui.dupFolderMode.textContent = state.dupFolderMode ? '✓ 选目录中' : '📂 选目录';
+      ui.dupFolderMode.title = state.dupFolderMode ? '点击退出选目录模式' : '进入勾选子文件夹模式：可多选要扫的文件夹';
+      renderDupCheckedChips();
+      if (state.dupFolderMode) {
+        loadBrowse(state.dupBrowse, renderDupFolderList);
+        ui.dupNote.textContent = '在右侧浏览并勾选要扫的子文件夹（可多选），然后点「扫描查重」';
+      } else {
+        ui.dupPanel.innerHTML = '<div class="pp-hint">点击「扫描查重」开始</div>';
+        ui.dupNote.textContent = '对当前文件夹执行文件查重；如需限定范围，点「📂 选目录」勾选子文件夹';
+      }
+    });
+    // 清空已选文件夹
+    ui.dupCheckedClear.addEventListener('click', () => {
+      state.dupCheckedFolders = [];
+      renderDupCheckedChips();
+      renderDupFolderList();
+    });
+    // 列表点击：选目录模式下勾选/进入；非选目录模式：原查重结果
+    ui.dupPanel.addEventListener('click', (e) => {
+      if (!state.dupFolderMode) return; // 非选目录模式不拦截（已有清理按钮）
+      const row = e.target.closest('.pp-row');
+      if (!row) return;
+      const id = row.dataset.id;
+      const isFolder = row.dataset.kind === 'folder';
+      if (!isFolder) return; // 选目录模式只显示文件夹
+      const isPick = e.target.closest('[data-pick]');
+      const isEnter = e.target.closest('[data-enter]');
+      const path = pathOfDupStack(state.dupBrowse.stack) + '/' + row.dataset.name;
+      if (isPick || !isEnter) {
+        // 勾选/取消
+        const idx = state.dupCheckedFolders.findIndex(function(x) { return x.id === id; });
+        if (idx >= 0) {
+          state.dupCheckedFolders.splice(idx, 1);
+        } else {
+          state.dupCheckedFolders.push({ id: id, name: row.dataset.name, path: path });
+        }
+        renderDupCheckedChips();
+        renderDupFolderList();
+      } else {
+        // 进入子文件夹
+        enterFolder(state.dupBrowse, { id: id, name: row.dataset.name }, renderDupFolderList);
+      }
     });
     // 扫描按钮
     ui.dupScan.addEventListener('click', executeDupScan);
@@ -3423,6 +3579,11 @@
       dupAlgoName: shadowRoot.getElementById('pp-dup-algo-name'),
       dupStrict: shadowRoot.getElementById('pp-dup-strict'),
       dupRecursive: shadowRoot.getElementById('pp-dup-recursive'),
+      dupFolderMode: shadowRoot.getElementById('pp-dup-foldermode'),
+      dupCheckedChips: shadowRoot.getElementById('pp-dup-checked-chips'),
+      dupCheckedList: shadowRoot.getElementById('pp-dup-checked-list'),
+      dupCheckedCount: shadowRoot.getElementById('pp-dup-checked-count'),
+      dupCheckedClear: shadowRoot.getElementById('pp-dup-checked-clear'),
     };
 
     bindEvents();
