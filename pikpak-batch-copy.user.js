@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PikPak 批量复制助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.11.0
+// @version      1.12.0
 // @description  PikPak 网页工作台（蓝白工作台风格）：① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -69,6 +69,11 @@
   // Web 客户端参数（用于 access_token 自动续期）
   const CLIENT_ID = 'YUMx5nI8ZU8Ap8pm';
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
+
+  // 当前脚本版本（与 @version 保持一致）
+  const SCRIPT_VERSION = '1.12.0';
+  // 脚本远程 raw URL（用于更新检查）
+  const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
   const COPY_INTERVAL_MS = 400; // 两次复制之间的间隔（毫秒），防止触发风控
   const MAX_LIST_ITEMS = 500;   // 文件列表最多渲染条数
@@ -731,6 +736,19 @@
     .pp-author-big { display: inline-block; font-size: 15px; font-weight: 700; color: #fff; }
     .pp-author-big a { color: #fff; text-decoration: none; border-bottom: 2px solid rgba(255,255,255,.55); padding-bottom: 1px; }
     .pp-author-big a:hover { border-bottom-color: #fff; }
+    /* 头部"有新版本"提示 */
+    .pp-update-hint {
+      display: inline-block; font-size: 12px; font-weight: 700;
+      color: #fff; background: linear-gradient(135deg, #ff7d00, #f53f3f);
+      padding: 2px 9px; border-radius: 999px; cursor: pointer;
+      box-shadow: 0 0 0 2px rgba(255,255,255,.18);
+      animation: pp-update-pulse 1.6s ease-in-out infinite;
+    }
+    .pp-update-hint:hover { filter: brightness(1.08); }
+    @keyframes pp-update-pulse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(255,255,255,.18), 0 0 0 0 rgba(245,63,63,.45); }
+      50% { box-shadow: 0 0 0 2px rgba(255,255,255,.18), 0 0 0 8px rgba(245,63,63,0); }
+    }
 
     /* ---- 功能导航（分段控件卡片）---- */
     .pp-panel-tabs {
@@ -995,7 +1013,9 @@
       <div class="pp-header" id="pp-header" title="按住此处拖动窗口；双击复位位置">
         <div class="pp-title-row">
           <span class="pp-title">⠿ PikPak 工作台</span>
+          <span class="pp-update-hint hidden" id="pp-update-hint" title="点击查看更新"></span>
           <span class="pp-header-btns">
+            <button class="pp-mini-btn" id="pp-checkupdate" title="检查脚本更新">🔄 检查更新</button>
             <button class="pp-mini-btn" id="pp-fullscreen" title="全屏 / 窗口切换">⛶ 全屏</button>
             <button class="pp-mini-btn" id="pp-reset" title="清空所有选择">重置</button>
             <button class="pp-mini-btn" id="pp-close" title="收起面板">×</button>
@@ -1290,7 +1310,8 @@
           <span id="pp-dup-checked-list"></span>
           <button class="pp-tbar-btn" id="pp-dup-checked-clear" style="margin-left:auto;">清空</button>
         </div>
-        <div class="pp-rn-rules" style="border-radius:8px;margin-top:8px;">
+        <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
+        <div class="pp-rn-rules" style="border-radius:8px;margin-top:6px;">
           <div class="pp-rn-rule-row" style="gap:14px;flex-wrap:wrap;">
             <label style="width:auto;flex:none;">算法</label>
             <label class="pp-rn-check"><input type="checkbox" id="pp-dup-algo-hash" checked> 精准匹配（哈希+大小）</label>
@@ -1307,11 +1328,10 @@
             <label class="pp-rn-check" style="margin-left:auto;"><input type="checkbox" id="pp-dup-recursive" checked> 递归扫描子文件夹</label>
           </div>
         </div>
-        <div class="pp-footer" style="padding-bottom:0;">
+        <div class="pp-footer">
           <span class="pp-note" id="pp-dup-note">对当前文件夹执行文件查重；如需限定范围，点「📂 选目录」勾选子文件夹</span>
           <button class="pp-btn pp-btn-primary" id="pp-dup-scan">🔍 扫描查重</button>
         </div>
-        <div class="pp-list" id="pp-dup-panel" style="flex:1;min-height:60px;margin-top:8px;"><div class="pp-hint">点击「扫描查重」开始</div></div>
       </div><!-- /pp-dup-body -->
 
       <div class="pp-resize" id="pp-resize" title="拖动调整窗口大小"></div>
@@ -1357,6 +1377,9 @@
     dupStopRequested: false,   // 递归扫描时是否请求停止
     dupFolderMode: false,      // 是否处于"勾选子文件夹"浏览模式
     dupCheckedFolders: [],     // 已勾选的子文件夹 [{id, name, path}]
+    updateInfo: null,           // {latest, hasUpdate} 最新版本信息
+    updateCheckDone: false,     // 是否已检查过更新（避免重复弹）
+    updateChecking: false,      // 防止并发检查
     running: false,
     stopRequested: false,
     results: [],
@@ -2714,6 +2737,12 @@
       }
     });
 
+    // 检查更新按钮（手动）+ 头部徽章（点击）
+    ui.checkUpdate.addEventListener('click', () => checkForUpdate(false));
+    ui.updateHint.addEventListener('click', () => {
+      if (state.updateInfo) showUpdateDialog(state.updateInfo.latest);
+    });
+
     ui.reset.addEventListener('click', () => {
       state.files = [];
       state.folders = [];
@@ -3320,6 +3349,97 @@
    * ================================================================ */
   const GEOM_KEY = 'pp_panel_geom_v1';
 
+  // 比较两个 SemVer 版本号，a>b 返回 1，a<b 返回 -1，相等返回 0
+  function compareVersions(a, b) {
+    const pa = String(a || '').replace(/^[vV]/, '').split(/[.-]/);
+    const pb = String(b || '').replace(/^[vV]/, '').split(/[.-]/);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const ai = pa[i] || '0', bi = pb[i] || '0';
+      const an = parseInt(ai, 10), bn = parseInt(bi, 10);
+      if (!isNaN(an) && !isNaN(bn)) {
+        if (an !== bn) return an > bn ? 1 : -1;
+      } else {
+        if (ai !== bi) return ai > bi ? 1 : -1;
+      }
+    }
+    return 0;
+  }
+
+  // 检查脚本更新：silent=true 自动检查只在新版弹窗；silent=false 手动总给反馈
+  async function checkForUpdate(silent) {
+    if (state.updateChecking) return;
+    state.updateChecking = true;
+    try {
+      const resp = await fetch(SCRIPT_RAW_URL, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const text = await resp.text();
+      const m = text.match(/@version\s+(\S+)/);
+      if (!m) throw new Error('未在远端脚本中找到 @version');
+      const latest = m[1].trim();
+      const hasUpdate = compareVersions(latest, SCRIPT_VERSION) > 0;
+      state.updateInfo = { latest: latest, hasUpdate: hasUpdate, checkedAt: Date.now() };
+      state.updateCheckDone = true;
+      renderUpdateHint();
+      if (hasUpdate) {
+        showUpdateDialog(latest);
+      } else if (!silent) {
+        alert('已是最新版本：v' + SCRIPT_VERSION);
+      }
+    } catch (e) {
+      if (!silent) {
+        alert('检查更新失败：' + (e.message || e));
+      } else {
+        console.warn('[PikPak 助手] 检查更新失败：', e);
+      }
+    } finally {
+      state.updateChecking = false;
+    }
+  }
+
+  // 渲染头部"有新版本"提示
+  function renderUpdateHint() {
+    const el = ui.updateHint;
+    if (!el) return;
+    if (state.updateInfo && state.updateInfo.hasUpdate) {
+      el.classList.remove('hidden');
+      el.textContent = '🆕 v' + state.updateInfo.latest;
+      el.title = '点击查看更新';
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
+  // 显示更新对话框
+  function showUpdateDialog(latest) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:system-ui;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:12px;padding:20px 24px;width:min(420px,90vw);box-shadow:0 20px 60px rgba(0,0,0,.3);color:#1f2329;';
+    box.innerHTML =
+      '<div style="font-size:16px;font-weight:700;margin-bottom:6px;">🆕 PikPak 助手有新版本</div>' +
+      '<div style="font-size:13px;color:#4e5969;margin-bottom:14px;line-height:1.6;">' +
+      '当前版本：<b>v' + SCRIPT_VERSION + '</b><br>最新版本：<b style="color:#2f54eb;">v' + latest + '</b><br>' +
+      '点「立即更新」跳转到脚本页面，Tampermonkey 会自动弹出更新确认；点「稍后」关闭弹窗，提示会保留在标题栏右侧，点它可随时再更新。' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+      '<button data-act="later" style="padding:6px 14px;border:1px solid #dcdfe8;background:#fff;border-radius:6px;cursor:pointer;font-size:13px;">稍后</button>' +
+      '<button data-act="update" style="padding:6px 14px;border:none;background:linear-gradient(135deg,#3b6bff,#2f54eb);color:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">立即更新</button>' +
+      '</div>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    box.querySelector('[data-act="later"]').addEventListener('click', function() {
+      document.body.removeChild(overlay);
+    });
+    box.querySelector('[data-act="update"]').addEventListener('click', function() {
+      window.open(SCRIPT_RAW_URL, '_blank');
+      document.body.removeChild(overlay);
+    });
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) document.body.removeChild(overlay);
+    });
+  }
+
   function savePanelGeom() {
     try {
       const r = ui.panel.getBoundingClientRect();
@@ -3568,6 +3688,8 @@
       manageExecute: shadowRoot.getElementById('pp-manage-execute'),
       copyModeRow: shadowRoot.getElementById('pp-copy-mode-row'),
       fullscreen: shadowRoot.getElementById('pp-fullscreen'),
+      updateHint: shadowRoot.getElementById('pp-update-hint'),
+      checkUpdate: shadowRoot.getElementById('pp-checkupdate'),
       dupBody: shadowRoot.getElementById('pp-dup-body'),
       bcDup: shadowRoot.getElementById('pp-bc-dup'),
       dupSearch: shadowRoot.getElementById('pp-search-dup'),
@@ -3590,6 +3712,11 @@
     applySavedGeom();
     initPanelGestures();
     renderChips();
+
+    // 启动后延迟 3 秒自动检查脚本更新（避开页面加载卡顿）
+    setTimeout(function() {
+      checkForUpdate(true);
+    }, 3000);
   }
 
   init();
