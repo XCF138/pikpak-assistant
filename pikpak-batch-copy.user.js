@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.22.1
+// @version      1.22.2
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.22.1';
+  const SCRIPT_VERSION = '1.22.2';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -3529,9 +3529,9 @@
 
   /* ================================================================
    * PikPak 助手入口（左侧）
-   * 形态：跟「已加星标」等官方项完全并列 —— 作为 <li> 插入到 PikPak
-   * 官方侧边栏的 <ol> 列表末尾，图标在左、文字在右，透明背景。
-   * 若侧边栏尚未渲染，则先固定在屏幕最左侧显示，渲染完成后再移进列表。
+   * 形态：跟「已加星标」等官方项完全并列 —— 插入到官方侧边栏里。
+   * 策略：优先按文字定位「已加星标」等官方项，找到后插入其后，
+   * 不再硬依赖 class 名；兜底才用旧版 class 选择器。
    * ================================================================ */
   function buildEntryContent() {
     const a = document.createElement('a');
@@ -3550,32 +3550,87 @@
     return a;
   }
 
-  function getSidebarNav() {
-    return document.querySelector('.wp-s-aside-nav__main-top')
-      || document.querySelector('[class*="wp-s-aside-nav"]')
-      || document.querySelector('[class*="aside-nav"]')
-      || document.querySelector('nav[class*="sidebar"]');
+  // 按纯文字匹配元素（用于定位「已加星标」等官方项）
+  function findElementByText(root, text) {
+    if (!root) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+    while (walker.nextNode()) {
+      if (walker.currentNode.textContent.trim() === text) return walker.currentNode;
+    }
+    return null;
   }
 
-  // 把入口作为普通 div  append 到官方侧边栏容器底部（和参考脚本一致）
+  function findSidebarContainer() {
+    // 1. 参考脚本的目标 class
+    let nav = document.querySelector('.wp-s-aside-nav__main-top');
+    if (nav) return nav;
+
+    // 2. 按文字找到任意官方项，再向上找列表容器
+    const labels = ['全部文件', '最近保存', '回收站', '我的分享', '播放历史', '已加星标'];
+    for (const label of labels) {
+      const el = findElementByText(document.body, label);
+      if (!el) continue;
+      let p = el;
+      while (p && p !== document.body) {
+        if (p.children.length >= 2) return p;
+        p = p.parentElement;
+      }
+    }
+
+    // 3. 兜底选择器
+    nav = document.querySelector('[class*="wp-s-aside-nav"]')
+      || document.querySelector('[class*="aside-nav"]')
+      || document.querySelector('nav[class*="sidebar"]');
+    return nav;
+  }
+
   function injectSidebarEntry() {
     if (document.getElementById('pikpak-assistant-entry')) return true;
-    const nav = getSidebarNav();
-    if (!nav) return false;
+    const nav = findSidebarContainer();
+    if (!nav) {
+      console.log('[PIKPAK助手] 未找到侧边栏容器');
+      return false;
+    }
+
     const wrap = document.createElement('div');
     wrap.id = 'pikpak-assistant-entry';
     wrap.className = 'pp-quick-entry';
     wrap.appendChild(buildEntryContent());
-    nav.appendChild(wrap);
+
+    // 尝试插入到「已加星标」后面；找不到就直接 append
+    const starEl = findElementByText(nav, '已加星标');
+    if (starEl) {
+      let item = starEl;
+      while (item && item.parentElement !== nav) item = item.parentElement;
+      if (item && item.nextSibling) nav.insertBefore(wrap, item.nextSibling);
+      else nav.appendChild(wrap);
+    } else {
+      nav.appendChild(wrap);
+    }
+
+    console.log('[PIKPAK助手] 入口已注入到侧边栏', nav.tagName, nav.className);
     return true;
   }
 
   function startSidebarInjection() {
-    // 轮询等待官方侧边栏渲染（参考脚本也是轮询 .wp-s-aside-nav__main-top）
+    if (injectSidebarEntry()) return;
+
     let tries = 0;
     const timer = setInterval(function() {
       if (injectSidebarEntry() || ++tries >= 100) clearInterval(timer);
     }, 200);
+
+    // 同时用 MutationObserver 监听动态渲染的侧边栏
+    try {
+      const obs = new MutationObserver(function() {
+        if (injectSidebarEntry()) {
+          obs.disconnect();
+          clearInterval(timer);
+        }
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      setTimeout(function() { obs.disconnect(); clearInterval(timer); }, 20000);
+    } catch (e) {}
   }
 
   // 清除旧版脚本残留的右下角 FAB（类名 .pp-quick-fab / 旧 id pp-quick-entries-wrap）
@@ -3644,6 +3699,7 @@
    * 启动
    * ================================================================ */
   function init() {
+    console.log('[PIKPAK助手] v' + SCRIPT_VERSION + ' 初始化');
     installFetchHook(); // 必须在发起任何 PikPak API 请求前安装
 
     // 注入全局 CSS（注入到 PikPak 官方 DOM 的元素不能用 Shadow DOM 隔离）

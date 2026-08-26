@@ -36,6 +36,12 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.22.2（2026-08-26）
+
+- **入口彻底消失问题的修复**：不再硬依赖 `.wp-s-aside-nav__main-top` 这个 class。改为**按文字定位官方项**（如「已加星标」「全部文件」「最近保存」等），找到后插入到「已加星标」后面；若找不到文字项，才回退到旧的 class 选择器兜底。这样即使 PikPak 改了 class 名，入口仍能注入。
+- 同时加入 `MutationObserver` 兜底监听，侧边栏如果是异步渲染也能被捕获；注入成功/失败都会打 `console.log`，方便你反馈时直接告诉我日志内容。
+- 在 `init()` 开头增加版本日志，方便确认 Tampermonkey 里跑的确实是新版。
+
 ### v1.22.1（2026-08-26）
 
 - **彻底杜绝「白卡片」**：给左侧入口的 `.pp-quick-entry / .pp-quick-entry-a / .pp-quick-entry-ico` 强制 `background-color: transparent !important; border:none !important; box-shadow:none !important;`，用 `!important` 压过 PikPak 页面可能给侧边栏子元素套上的任何背景/边框/阴影，确保入口永远与官方项一样透明融合。hover/active 的高亮也同步用 `!important` 保留。
