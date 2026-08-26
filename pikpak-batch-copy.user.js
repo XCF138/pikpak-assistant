@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.21.0
+// @version      1.22.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -71,7 +71,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.20.0';
+  const SCRIPT_VERSION = '1.22.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -116,15 +116,13 @@
 
   /* ================================================================
    * 注入 PikPak 左侧入口的样式（不能用 Shadow DOM 隔离）
-   * 作为官方侧边栏 <ol> 里的 <li> 并列显示：透明背景、图标+文字
+   * 与官方侧边栏项完全并排：透明背景、左边图标、右边文字
    * ================================================================ */
   const PP_QUICK_CSS = `
-    /* <li> 在官方列表里，不额外加 margin/padding */
-    .pp-quick-entry-li { list-style: none; margin: 0; padding: 0; }
-    /* <a> 严格仿官方项：透明背景、左边图标、右边文字 */
+    .pp-quick-entry { width: 100%; box-sizing: border-box; }
     .pp-quick-entry-a {
       display: flex; align-items: center; gap: 12px;
-      padding: 9px 16px; min-height: 40px;
+      width: 100%; height: 44px; padding: 0 16px;
       color: #4e5969; text-decoration: none; cursor: pointer;
       border-radius: 8px; background-color: transparent;
       font: 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -144,14 +142,6 @@
       flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       font-weight: 500;
     }
-
-    /* 降级：屏幕最左侧固定（侧边栏未渲染时的兜底） */
-    .pp-quick-fallback-left {
-      position: fixed; left: 8px; top: 50%; transform: translateY(-50%);
-      z-index: 999998; width: auto; background: #fff; border-radius: 10px;
-      box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 0;
-    }
-    .pp-quick-fallback-left .pp-quick-entry-a { width: auto; }
   `;
 
   // Hook 网页的 fetch，捕获 PikPak 自己生成的 captcha init 请求模板和当前使用的 captcha token
@@ -3553,57 +3543,31 @@
     return a;
   }
 
-  // 找到官方侧边栏里的 <ol> 列表容器
-  function getSidebarList() {
-    const nav = document.querySelector('.wp-s-aside-nav__main-top')
+  function getSidebarNav() {
+    return document.querySelector('.wp-s-aside-nav__main-top')
       || document.querySelector('[class*="wp-s-aside-nav"]')
       || document.querySelector('[class*="aside-nav"]')
       || document.querySelector('nav[class*="sidebar"]');
-    if (!nav) return null;
-    // 优先返回 nav 里的 <ol>，没有则返回 nav 本身兜底
-    return nav.querySelector('ol') || nav;
   }
 
-  // 把入口作为 <li> 放进官方侧边栏 <ol>；若已在其中则不动
-  function upgradeToSidebar() {
-    const existing = document.getElementById('pikpak-assistant-entry');
-    const list = getSidebarList();
-    if (!list) return false;
-    if (existing && existing.tagName === 'LI') {
-      if (existing.parentNode === list) return true;
-      list.appendChild(existing);
-      return true;
-    }
-    // 如果之前是降级 div，先删掉
-    if (existing) existing.remove();
-    const li = document.createElement('li');
-    li.id = 'pikpak-assistant-entry';
-    li.className = 'pp-quick-entry-li';
-    li.appendChild(buildEntryContent());
-    list.appendChild(li);
+  // 把入口作为普通 div  append 到官方侧边栏容器底部（和参考脚本一致）
+  function injectSidebarEntry() {
+    if (document.getElementById('pikpak-assistant-entry')) return true;
+    const nav = getSidebarNav();
+    if (!nav) return false;
+    const wrap = document.createElement('div');
+    wrap.id = 'pikpak-assistant-entry';
+    wrap.className = 'pp-quick-entry';
+    wrap.appendChild(buildEntryContent());
+    nav.appendChild(wrap);
     return true;
   }
 
-  // 侧边栏还没渲染时，先在屏幕最左侧显示一个固定入口
-  function showFallbackLeft() {
-    if (document.getElementById('pikpak-assistant-entry')) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'pikpak-assistant-entry';
-    wrap.className = 'pp-quick-entry pp-quick-fallback-left';
-    const a = buildEntryContent();
-    a.className = a.className + ' pp-quick-entry-btn';
-    wrap.appendChild(a);
-    document.body.appendChild(wrap);
-  }
-
   function startSidebarInjection() {
-    // 1) 先尝试放进官方侧边栏列表；放不进就立刻在左侧显示固定入口
-    if (!upgradeToSidebar()) showFallbackLeft();
-
-    // 2) 持续轮询，等官方侧边栏渲染出来后把入口移进 <ol>（最多 ~12s）
+    // 轮询等待官方侧边栏渲染（参考脚本也是轮询 .wp-s-aside-nav__main-top）
     let tries = 0;
     const timer = setInterval(function() {
-      if (upgradeToSidebar() || ++tries >= 60) clearInterval(timer);
+      if (injectSidebarEntry() || ++tries >= 100) clearInterval(timer);
     }, 200);
   }
 
