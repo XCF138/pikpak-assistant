@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.27.4
+// @version      1.28.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.27.4';
+  const SCRIPT_VERSION = '1.28.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -163,23 +163,6 @@
     .pp-quick-entry-txt {
       flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       font-weight: 500;
-    }
-    /* 导出分享入口：青绿色胶囊，与主入口区分 */
-    .pp-quick-entry.pp-export-wrap { margin-top: 6px; }
-    .pp-quick-entry-a.pp-export-entry {
-      background-color: #0fbf8f !important;
-      height: 40px;
-    }
-    .pp-quick-entry-a.pp-export-entry:hover { background-color: #0ca87e !important; }
-    .pp-quick-entry-a.pp-export-entry:active { background-color: #09936e !important; }
-    .pp-quick-entry-a.pp-export-entry.pp-running { opacity: .6; pointer-events: none; }
-    /* 导出进度提示（右下角 toast） */
-    .pp-export-toast {
-      position: fixed; right: 18px; bottom: 18px; z-index: 999999;
-      max-width: 360px; padding: 10px 14px; border-radius: 8px;
-      background: rgba(20, 24, 34, .92); color: #fff;
-      font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      box-shadow: 0 4px 16px rgba(0,0,0,.25);
     }
   `;
 
@@ -559,13 +542,23 @@
   function extractShareItems(resp) {
     if (!resp) return [];
     const candidates = [
-      resp.shares, resp.share_list, resp.list, resp.items, resp.files, resp.share,
-      resp.data && resp.data.shares, resp.data && resp.data.share_list,
-      resp.data && resp.data.list, resp.data && resp.data.items,
-      Array.isArray(resp.data) ? resp.data : null,
+      { k: 'resp.shares', v: resp.shares },
+      { k: 'resp.share_list', v: resp.share_list },
+      { k: 'resp.list', v: resp.list },
+      { k: 'resp.items', v: resp.items },
+      { k: 'resp.files', v: resp.files },
+      { k: 'resp.share', v: resp.share },
+      { k: 'resp.data.shares', v: resp.data && resp.data.shares },
+      { k: 'resp.data.share_list', v: resp.data && resp.data.share_list },
+      { k: 'resp.data.list', v: resp.data && resp.data.list },
+      { k: 'resp.data.items', v: resp.data && resp.data.items },
+      { k: 'resp.data (array)', v: Array.isArray(resp.data) ? resp.data : null },
     ];
     for (const c of candidates) {
-      if (Array.isArray(c)) return c;
+      if (Array.isArray(c.v) && c.v.length > 0) {
+        console.log('[PIKPAK助手] 分享列表命中字段：', c.k, '，长度', c.v.length);
+        return c.v;
+      }
     }
     return [];
   }
@@ -625,6 +618,16 @@
         const out = await pagedShareFetch(at.base);
         if (out.length > 0) {
           console.log('[PIKPAK助手] 分享列表成功（', at.label, '），共', out.length, '条');
+          if (out[0]) {
+            console.log('[PIKPAK助手] 分享项示例字段：', Object.keys(out[0]));
+            console.log('[PIKPAK助手] 分享项示例（脱敏摘要）：', {
+              name: getShareName(out[0]), url: getShareUrl(out[0]),
+              share_id: out[0].share_id, id: out[0].id,
+              size: out[0].size, total_size: out[0].total_size,
+              kind: out[0].kind, type: out[0].type,
+              file_list_len: (out[0].file_list || out[0].fileList || out[0].files || []).length
+            });
+          }
           return out;
         }
         if (!emptyFallback) emptyFallback = out; // 请求成功但为空，作最后兜底
@@ -640,15 +643,33 @@
 
   // 判断分享 file_list 里某项是否为文件夹
   function isShareItemFolder(f) {
+    if (!f) return false;
     if (f.kind === 'drive#folder') return true;
-    if (f.folder_type) return true;
+    if (f.type === 'folder' || f.folder_type) return true;
     // 没有 mime 也没有 size 的项按文件夹兜底处理
     return !f.mime_type && f.size === undefined && f.file_size === undefined;
   }
 
-  // 单条分享的总大小：文件项直接取 size；文件夹项走自己网盘递归统计
+  // 从分享项对象里取出展示名
+  function getShareName(s) {
+    return String(s.name || s.file_name || s.title || s.share_name || s.subject || '').trim();
+  }
+
+  // 从分享项对象里取出分享链接（尽量用官方字段，否则按 share_id/id 拼）
+  function getShareUrl(s) {
+    const direct = s.share_url || s.url || s.link || s.share_link || s.web_link || '';
+    if (direct) return direct;
+    const sid = s.share_id || s.id || '';
+    if (sid && String(sid).length >= 4) return 'https://mypikpak.com/s/' + sid;
+    return '';
+  }
+
+  // 单条分享的总大小：优先用分享项自带字段；文件夹项递归统计自己网盘
   async function computeShareTotalSize(share) {
-    const items = share.file_list || share.fileList || [];
+    const directSize = share.size || share.total_size || share.share_size || share.file_size;
+    if (directSize && !isNaN(parseInt(directSize))) return parseInt(directSize);
+    const items = share.file_list || share.fileList || share.files || [];
+    if (!Array.isArray(items) || items.length === 0) return 0;
     let total = 0;
     for (const f of items) {
       if (isShareItemFolder(f)) {
@@ -658,70 +679,6 @@
       }
     }
     return total;
-  }
-
-  // 右下角 toast 提示
-  let ppExportToast = null;
-  function showExportStatus(text, sticky) {
-    if (!ppExportToast || !ppExportToast.isConnected) {
-      ppExportToast = document.createElement('div');
-      ppExportToast.className = 'pp-export-toast';
-      document.body.appendChild(ppExportToast);
-    }
-    ppExportToast.textContent = text;
-    ppExportToast.style.display = 'block';
-    if (!sticky) {
-      clearTimeout(showExportStatus._t);
-      showExportStatus._t = setTimeout(function() {
-        if (ppExportToast) ppExportToast.style.display = 'none';
-      }, 4000);
-    }
-  }
-
-  // 导出我的分享：每行「文件名--链接--总大小」，输出 txt 下载
-  let ppExportRunning = false;
-  async function exportMyShares() {
-    if (ppExportRunning) return;
-    ppExportRunning = true;
-    const btn = document.querySelector('#pp-share-export-entry .pp-quick-entry-a');
-    if (btn) btn.classList.add('pp-running');
-    try {
-      showExportStatus('正在获取分享列表…', true);
-      const shares = await fetchMyShares();
-      if (!shares.length) {
-        showExportStatus('没有找到任何分享记录（若实际有分享，请把 F12 控制台「分享列表原始响应」一行发我）');
-        return;
-      }
-      const lines = [];
-      for (let i = 0; i < shares.length; i++) {
-        const s = shares[i];
-        const name = String(s.name || '').trim() || '未命名分享';
-        showExportStatus('正在统计大小 ' + (i + 1) + '/' + shares.length + '：' + name, true);
-        let sizeStr = '';
-        try {
-          sizeStr = fmtSize(await computeShareTotalSize(s));
-        } catch (e) { sizeStr = '未知'; }
-        lines.push(name + '--' + (s.share_url || '') + '--' + sizeStr);
-      }
-      const d = new Date();
-      const pad = function(n) { return (n < 10 ? '0' : '') + n; };
-      const dateStr = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate());
-      const blob = new Blob(['\ufeff' + lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '我的分享_' + dateStr + '.txt';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function() { a.remove(); URL.revokeObjectURL(url); }, 1000);
-      showExportStatus('已导出 ' + lines.length + ' 条分享（文件名--链接--总大小）');
-    } catch (e) {
-      console.log('[PIKPAK助手] 导出分享失败：', e);
-      showExportStatus('导出失败：' + (e.message || String(e)) + '\n（F12 控制台有详细日志）');
-    } finally {
-      ppExportRunning = false;
-      if (btn) btn.classList.remove('pp-running');
-    }
   }
 
   // 批量移到回收站（安全，可恢复）
@@ -845,6 +802,7 @@
   // 导出多个选中文件夹的目录树为 TXT（每个文件夹一个区块，用空行分隔）
   async function exportSelectedTrees() {
     if (state.treeFolders.length === 0) return;
+    if (state.treeSource === 'shares') return exportSelectedShares();
     const overlay = ui.exportOverlay;
     const statusEl = ui.exportStatus;
     state.treeExportStopping = false;
@@ -885,6 +843,64 @@
         downloadTxt(filename, sections.join('\n\n') + '\n');
       }
       statusEl.textContent = '完成！共 ' + state.treeFolders.length + ' 个文件夹、' + count.total + ' 个子文件夹，已下载 ' + filename;
+    } catch (e) {
+      statusEl.textContent = '导出失败：' + (e.message || String(e));
+    } finally {
+      setTimeout(() => { overlay.classList.add('hidden'); ui.stopScan.classList.add('hidden'); }, state.treeExportStopping ? 600 : 1800);
+    }
+  }
+
+  // 加载「我的分享」列表到目录树面板
+  async function loadTreeShares() {
+    state.treeSharesLoading = true;
+    state.treeSharesError = null;
+    state.treeShares = [];
+    renderTreeList();
+    try {
+      const shares = await fetchMyShares();
+      state.treeShares = shares;
+      if (!shares.length) state.treeSharesError = '没有分享记录';
+    } catch (e) {
+      state.treeSharesError = e.message || String(e);
+    } finally {
+      state.treeSharesLoading = false;
+      renderTreeList();
+    }
+  }
+
+  // 导出目录树面板里勾选的分享项（name--url--size）
+  async function exportSelectedShares() {
+    const pickedShares = [];
+    for (const sel of state.treeFolders) {
+      const s = state.treeShares.find((x) => (x.share_id || x.id || x.file_id || '') === sel.id);
+      if (s) pickedShares.push(s);
+    }
+    if (pickedShares.length === 0) return;
+
+    const overlay = ui.exportOverlay;
+    const statusEl = ui.exportStatus;
+    state.treeExportStopping = false;
+    ui.stopScan.classList.remove('hidden');
+    overlay.classList.remove('hidden');
+
+    try {
+      const lines = [];
+      for (let i = 0; i < pickedShares.length; i++) {
+        if (state.treeExportStopping) break;
+        const s = pickedShares[i];
+        const name = getShareName(s) || '未命名分享';
+        statusEl.textContent = '正在统计大小 ' + (i + 1) + '/' + pickedShares.length + '：' + name;
+        let sizeStr = '';
+        try {
+          sizeStr = fmtSize(await computeShareTotalSize(s));
+        } catch (e) { sizeStr = '未知'; }
+        lines.push(name + '--' + getShareUrl(s) + '--' + sizeStr);
+      }
+      const ts = new Date();
+      const p = (x) => String(x).padStart(2, '0');
+      const dateStr = ts.getFullYear() + p(ts.getMonth() + 1) + p(ts.getDate()) + '_' + p(ts.getHours()) + p(ts.getMinutes());
+      downloadTxt('我的分享_' + pickedShares.length + '项_' + dateStr + '.txt', lines.join('\n') + '\n');
+      statusEl.textContent = '完成！已导出 ' + pickedShares.length + ' 条分享';
     } catch (e) {
       statusEl.textContent = '导出失败：' + (e.message || String(e));
     } finally {
@@ -1436,6 +1452,13 @@
         <div class="pp-toolbar">
           <div class="pp-bc" id="pp-bc-tree"></div>
           <div class="pp-depth-box">
+            <label for="pp-tree-source">来源</label>
+            <select id="pp-tree-source" title="数据来源">
+              <option value="drive">我的网盘</option>
+              <option value="shares">我的分享</option>
+            </select>
+          </div>
+          <div class="pp-depth-box">
             <label for="pp-tree-depth">深度</label>
             <select id="pp-tree-depth" title="扫描深度">
               <option value="1">仅当前层</option>
@@ -1684,6 +1707,11 @@
     files: [],      // 已选源文件 [{id, name}]
     folders: [],    // 已勾选的目标文件夹 [{id, name}]
     treeFolders: [], // 导出目录树模式：已勾选的文件夹 [{id, name}]
+    treeSource: 'drive', // 'drive' | 'shares'：目录树数据来源
+    treeFilter: '',      // 目录树列表的筛选关键字
+    treeShares: [],      // 「我的分享」模式下加载的分享项
+    treeSharesLoading: false,
+    treeSharesError: null,
     browse1: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0 },
     browse2: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0 },
     treeBrowse: { stack: [{ id: '', name: '根目录' }], data: null, loading: false, error: null, filter: '', loadToken: 0, inited: false },
@@ -1816,9 +1844,48 @@
     renderChips();
   }
 
+  // 筛选分享列表（按名字）
+  function filterShares(shares, kw) {
+    const keyword = String(kw || '').trim().toLowerCase();
+    if (!keyword) return shares;
+    return shares.filter((s) => String(getShareName(s) || '').toLowerCase().includes(keyword));
+  }
+
   /* ---- 导出目录树模式：列表渲染 ---- */
   function renderTreeList() {
     const el = ui.listTree;
+
+    // 我的分享模式
+    if (state.treeSource === 'shares') {
+      renderBreadcrumb(ui.bcTree, { stack: [{ name: '我的分享' }] });
+      if (state.treeSharesLoading) { el.innerHTML = '<div class="pp-hint">加载分享列表…</div>'; return; }
+      if (state.treeSharesError) { el.innerHTML = '<div class="pp-hint error">' + esc(state.treeSharesError) + '</div>'; return; }
+      if (!state.treeShares) { el.innerHTML = '<div class="pp-hint">准备就绪</div>'; return; }
+      const shares = filterShares(state.treeShares, state.treeFilter);
+      if (shares.length === 0) {
+        el.innerHTML = '<div class="pp-hint">没有符合条件的分享。</div>';
+        return;
+      }
+      let html = '';
+      for (const s of shares.slice(0, MAX_LIST_ITEMS)) {
+        const sid = s.share_id || s.id || s.file_id || '';
+        const name = getShareName(s) || '未命名分享';
+        const picked = state.treeFolders.some((x) => x.id === sid);
+        html += '<div class="pp-row share' + (picked ? ' picked' : '') + '" data-id="' + esc(sid) + '" data-name="' + esc(name) + '">' +
+          '<span class="pp-pick" data-pick="1">✓</span>' +
+          '<span class="ico">🔗</span>' +
+          '<span class="name" title="' + esc(name) + '">' + esc(name) + '</span>' +
+          '<span class="meta">' + (s.share_channel || s.channel || '分享') + '</span></div>';
+      }
+      if (shares.length > MAX_LIST_ITEMS) {
+        html += '<div class="pp-hint">仅显示前 ' + MAX_LIST_ITEMS + ' 项（共 ' + shares.length + ' 项）</div>';
+      }
+      el.innerHTML = html;
+      renderTreeChips();
+      return;
+    }
+
+    // 我的网盘模式（原逻辑）
     const b = state.treeBrowse;
     renderBreadcrumb(ui.bcTree, b);
     if (b.loading) { el.innerHTML = '<div class="pp-hint">加载中…</div>'; return; }
@@ -1849,14 +1916,20 @@
 
   function renderTreeChips() {
     const chips = state.treeFolders.map((f, i) =>
-      '<span class="pp-chip">📁 <span class="t" title="' + esc(f.name) + '">' + esc(f.name) +
+      '<span class="pp-chip">' + (state.treeSource === 'shares' ? '🔗' : '📁') + ' <span class="t" title="' + esc(f.name) + '">' + esc(f.name) +
       '</span><button data-rmtreefolder="' + i + '">×</button></span>'
     ).join('');
-    ui.treeChips.innerHTML = chips || '<span style="font-size:11px;color:#a9aeb8;">尚未勾选文件夹</span>';
+    ui.treeChips.innerHTML = chips || '<span style="font-size:11px;color:#a9aeb8;">' + (state.treeSource === 'shares' ? '尚未勾选分享' : '尚未勾选文件夹') + '</span>';
     ui.exportSelected.disabled = state.treeFolders.length === 0;
-    ui.exportSelected.textContent = state.treeFolders.length > 0
-      ? '🌳 导出选中目录树（' + state.treeFolders.length + '）'
-      : '🌳 导出选中目录树';
+    if (state.treeSource === 'shares') {
+      ui.exportSelected.textContent = state.treeFolders.length > 0
+        ? '🔗 导出选中分享（' + state.treeFolders.length + '）'
+        : '🔗 导出选中分享';
+    } else {
+      ui.exportSelected.textContent = state.treeFolders.length > 0
+        ? '🌳 导出选中目录树（' + state.treeFolders.length + '）'
+        : '🌳 导出选中目录树';
+    }
   }
 
   /* ================================================================
@@ -2299,13 +2372,19 @@
       loadBrowse(state.dupBrowse, function() { renderBreadcrumb(ui.bcDup, state.dupBrowse); });
     }
     // 首次进入 tree 模式时加载
-    if (mode === 'tree' && !state.treeBrowse.inited) {
-      state.treeBrowse.inited = true;
-      // 复用 browse2 的初始路径
-      if (state.browse2.inited && state.browse2.stack.length > 1) {
-        state.treeBrowse.stack = state.browse2.stack.map(function(s) { return { id: s.id, name: s.name }; });
+    if (mode === 'tree') {
+      if (state.treeSource === 'shares') {
+        if (state.treeShares.length === 0 && !state.treeSharesLoading && !state.treeSharesError) {
+          loadTreeShares();
+        }
+      } else if (!state.treeBrowse.inited) {
+        state.treeBrowse.inited = true;
+        // 复用 browse2 的初始路径
+        if (state.browse2.inited && state.browse2.stack.length > 1) {
+          state.treeBrowse.stack = state.browse2.stack.map(function(s) { return { id: s.id, name: s.name }; });
+        }
+        loadBrowse(state.treeBrowse, renderTreeList);
       }
-      loadBrowse(state.treeBrowse, renderTreeList);
     }
     // 首次进入 rename 模式时加载
     if (mode === 'rename' && !state.renameBrowse.inited) {
@@ -3635,6 +3714,7 @@
 
     // ---- 导出目录树模式：筛选 ----
     ui.searchTree.addEventListener('input', () => {
+      state.treeFilter = ui.searchTree.value;
       state.treeBrowse.filter = ui.searchTree.value;
       renderTreeList();
     });
@@ -3669,8 +3749,20 @@
       }
     });
 
-    // 全选当前列表中的文件夹
+    // 全选当前列表中的文件夹 / 分享
     ui.treeSelectAll.addEventListener('click', () => {
+      if (state.treeSource === 'shares') {
+        const shares = filterShares(state.treeShares, state.treeFilter);
+        for (const s of shares) {
+          const sid = s.share_id || s.id || s.file_id || '';
+          const name = getShareName(s) || '未命名分享';
+          if (!state.treeFolders.some((x) => x.id === sid)) {
+            state.treeFolders.push({ id: sid, name: name });
+          }
+        }
+        renderTreeList();
+        return;
+      }
       if (!state.treeBrowse.data) return;
       const { folders } = filterItems(state.treeBrowse);
       for (const f of folders) {
@@ -3681,8 +3773,23 @@
       renderTreeList();
     });
 
-    // 反选当前列表中的文件夹
+    // 反选当前列表中的文件夹 / 分享
     ui.treeInvert.addEventListener('click', () => {
+      if (state.treeSource === 'shares') {
+        const shares = filterShares(state.treeShares, state.treeFilter);
+        for (const s of shares) {
+          const sid = s.share_id || s.id || s.file_id || '';
+          const name = getShareName(s) || '未命名分享';
+          const idx = state.treeFolders.findIndex((x) => x.id === sid);
+          if (idx >= 0) {
+            state.treeFolders.splice(idx, 1);
+          } else {
+            state.treeFolders.push({ id: sid, name: name });
+          }
+        }
+        renderTreeList();
+        return;
+      }
       if (!state.treeBrowse.data) return;
       const { folders } = filterItems(state.treeBrowse);
       for (const f of folders) {
@@ -3717,6 +3824,25 @@
     // 导出格式选择（TXT / PNG）
     ui.treeFormat.addEventListener('change', () => {
       state.treeFormat = ui.treeFormat.value === 'png' ? 'png' : 'txt';
+    });
+
+    // 目录树数据来源切换（网盘 / 我的分享）
+    ui.treeSource.addEventListener('change', () => {
+      state.treeSource = ui.treeSource.value === 'shares' ? 'shares' : 'drive';
+      state.treeFolders = [];
+      renderTreeChips();
+      if (state.treeSource === 'shares') {
+        ui.treeDepth.parentElement.classList.add('hidden');
+        ui.treeFormat.parentElement.classList.add('hidden');
+        ui.treeNote.textContent = '勾选要导出的分享，每行输出「名字--链接--总大小」';
+        loadTreeShares();
+      } else {
+        ui.treeDepth.parentElement.classList.remove('hidden');
+        ui.treeFormat.parentElement.classList.remove('hidden');
+        ui.treeNote.textContent = '勾选要导出的文件夹；格式可选 TXT / PNG（默认仅扫描当前层）';
+        if (!state.treeBrowse.data) loadBrowse(state.treeBrowse, renderTreeList);
+        else renderTreeList();
+      }
     });
 
     // 停止扫描
@@ -4222,23 +4348,6 @@
   }
 
   // 「导出分享」入口：青绿色胶囊，点击后把我的分享导出为 txt（文件名--链接--总大小）
-  function buildExportEntryContent() {
-    const a = document.createElement('a');
-    a.className = 'pp-quick-entry-a pp-export-entry';
-    a.href = 'javascript:void(0)';
-    a.title = '导出我的分享：每行「文件名--链接--总大小」，保存为 txt';
-    const shareSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff" aria-hidden="true">' +
-      '<path d="M18 16.1c-.8 0-1.5.3-2 .8l-7.1-4.2c.1-.2.1-.5.1-.7s0-.5-.1-.7L16 7.2c.5.5 1.2.8 2 .8 1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3c0 .2 0 .5.1.7L8 9.8C7.5 9.3 6.8 9 6 9c-1.7 0-3 1.3-3 3s1.3 3 3 3c.8 0 1.5-.3 2-.8l7.1 4.2c-.1.2-.1.4-.1.6 0 1.7 1.3 3 3 3s3-1.3 3-3-1.3-2.9-3-2.9z"/></svg>';
-    a.innerHTML =
-      '<span class="pp-quick-entry-ico">' + shareSvg + '</span>' +
-      '<span class="pp-quick-entry-txt">导出分享</span>';
-    a.addEventListener('click', function(e) {
-      e.preventDefault();
-      exportMyShares();
-    });
-    return a;
-  }
-
   function injectSidebarEntry() {
     if (document.getElementById('pikpak-assistant-entry')) return true;
     const nav = findSidebarContainer();
@@ -4261,19 +4370,6 @@
       else nav.appendChild(wrap);
     } else {
       nav.appendChild(wrap);
-    }
-
-    // 导出分享入口：紧跟 PIKPAK 助手入口之后
-    try {
-      if (!document.getElementById('pp-share-export-entry')) {
-        const exportWrap = document.createElement('div');
-        exportWrap.id = 'pp-share-export-entry';
-        exportWrap.className = 'pp-quick-entry pp-export-wrap';
-        exportWrap.appendChild(buildExportEntryContent());
-        nav.insertBefore(exportWrap, wrap.nextSibling);
-      }
-    } catch (e) {
-      console.log('[PIKPAK助手] 导出分享入口注入失败', e);
     }
 
     console.log('[PIKPAK助手] 入口已注入到侧边栏', nav.tagName, nav.className);
@@ -4406,12 +4502,14 @@
       copyBody: shadowRoot.getElementById('pp-copy-body'),
       treeBody: shadowRoot.getElementById('pp-tree-body'),
       bcTree: shadowRoot.getElementById('pp-bc-tree'),
+      treeSource: shadowRoot.getElementById('pp-tree-source'),
       searchTree: shadowRoot.getElementById('pp-search-tree'),
       listTree: shadowRoot.getElementById('pp-list-tree'),
       treeDepth: shadowRoot.getElementById('pp-tree-depth'),
       treeSelectAll: shadowRoot.getElementById('pp-tree-selectall'),
       treeInvert: shadowRoot.getElementById('pp-tree-invert'),
       treeChips: shadowRoot.getElementById('pp-tree-chips'),
+      treeNote: shadowRoot.getElementById('pp-tree-note'),
       exportSelected: shadowRoot.getElementById('pp-export-selected'),
       stopScan: shadowRoot.getElementById('pp-stop-scan'),
       exportOverlay: shadowRoot.getElementById('pp-export-overlay'),
