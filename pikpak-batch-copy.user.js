@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.27.3
+// @version      1.27.4
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.27.3';
+  const SCRIPT_VERSION = '1.27.4';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -555,6 +555,21 @@
     return { baseUrl: m[1] || undefined, path: m[2] };
   }
 
+  // 从分享列表响应里挖出条目数组（不同版本字段名不一，逐个候选键探测）
+  function extractShareItems(resp) {
+    if (!resp) return [];
+    const candidates = [
+      resp.shares, resp.share_list, resp.list, resp.items, resp.files, resp.share,
+      resp.data && resp.data.shares, resp.data && resp.data.share_list,
+      resp.data && resp.data.list, resp.data && resp.data.items,
+      Array.isArray(resp.data) ? resp.data : null,
+    ];
+    for (const c of candidates) {
+      if (Array.isArray(c)) return c;
+    }
+    return [];
+  }
+
   // 按模板 URL 翻页拉取分享列表（自动清理/追加 page_token）
   async function pagedShareFetch(base) {
     const out = [];
@@ -568,10 +583,15 @@
       if (pageToken) q += (q.includes('?') ? '&' : '?') + 'page_token=' + encodeURIComponent(pageToken);
       const { baseUrl, path } = splitPikpakUrl(q);
       const resp = await apiRequest('GET', path, undefined, baseUrl ? { baseUrl: baseUrl } : undefined);
-      console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','));
-      const items = resp.shares || resp.share_list || resp.items || resp.files || [];
+      const items = extractShareItems(resp);
+      console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','),
+        '→ 本页解析到', items.length, '条');
+      if (items.length === 0) {
+        // 解析不到条目时把原始响应打出来，便于定位真实字段名
+        try { console.log('[PIKPAK助手] 分享列表原始响应（前800字符）：', JSON.stringify(resp).slice(0, 800)); } catch (e) {}
+      }
       out.push.apply(out, items);
-      pageToken = resp.next_page_token || '';
+      pageToken = resp.next_page_token || (resp.data && resp.data.next_page_token) || '';
       if (out.length > 2000) break; // 防御性上限
     }
     return out;
@@ -663,7 +683,7 @@
       showExportStatus('正在获取分享列表…', true);
       const shares = await fetchMyShares();
       if (!shares.length) {
-        showExportStatus('没有找到任何分享记录');
+        showExportStatus('没有找到任何分享记录（若实际有分享，请把 F12 控制台「分享列表原始响应」一行发我）');
         return;
       }
       const lines = [];
