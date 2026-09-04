@@ -587,8 +587,14 @@
       console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','),
         '→ 本页解析到', items.length, '条');
       if (items.length === 0) {
-        // 解析不到条目时把原始响应打出来，便于定位真实字段名
-        try { console.log('[PIKPAK助手] 分享列表原始响应（前800字符）：', JSON.stringify(resp).slice(0, 800)); } catch (e) {}
+        // 解析不到条目时把响应结构打出来，便于定位真实字段名
+        try {
+          const r = resp || {};
+          const topKeys = Object.keys(r).map(k => k + ':' + (Array.isArray(r[k]) ? 'array(' + r[k].length + ')' : typeof r[k])).join(', ');
+          const dataKeys = r.data ? Object.keys(r.data).map(k => k + ':' + (Array.isArray(r.data[k]) ? 'array(' + r.data[k].length + ')' : typeof r.data[k])).join(', ') : '(无 data 字段)';
+          console.log('[PIKPAK助手] 分享列表解析为 0 条。顶层字段 =', topKeys, '| data 字段 =', dataKeys);
+          console.log('[PIKPAK助手] 分享列表原始响应（前1500字符）：', JSON.stringify(r).slice(0, 1500));
+        } catch (e) {}
       }
       out.push.apply(out, items);
       pageToken = resp.next_page_token || (resp.data && resp.data.next_page_token) || '';
