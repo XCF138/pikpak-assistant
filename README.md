@@ -36,6 +36,12 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.28.1（2026-09-04）
+- **修复**：「我的分享」导出大小仍为空。分享项真实字段为 `title`（名字）、`file_size`（大小）、`file_kind`（类型，如 `drive#folder`）、`file_id`（文件/文件夹 id），没有 `name/kind/size` 那些别名。
+- `isShareItemFolder` 增加 `file_kind === 'drive#folder'` 判定。
+- `computeShareTotalSize` 增加兜底：当分享项只有 `file_id` 而无 `file_list` 时，文件夹用 `file_id` 走 `sumDriveFolderSize` 递归统计，文件用 `getFileInfo(file_id)` 取真实大小。
+- 诊断日志补全 `file_id / file_size / file_kind / file_num`。
+
 ### v1.28.0（2026-09-04）
 - **重构**：把「导出我的分享」合并到「目录树」面板。目录树面板顶部新增「来源」下拉：
   - **我的网盘**：保持原有目录树导出（勾选文件夹 → TXT / PNG）。
