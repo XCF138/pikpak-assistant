@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.27.0
+// @version      1.27.1
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.27.0';
+  const SCRIPT_VERSION = '1.27.1';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -523,25 +523,47 @@
   }
 
   // 拉取「我的分享」全量列表（自动翻页）
+  // 注意：不同区域/版本对这个接口的入参要求不一致（with_audit 之类多传就会报「请求参数错误」），
+  // 所以这里用多组参数依次降级重试，取第一个真正拿到数据的组合。
   async function fetchMyShares() {
-    const out = [];
-    let pageToken = '';
-    let first = true;
-    while (first || pageToken) {
-      first = false;
-      const params = new URLSearchParams({
-        limit: '100',
-        thumbnail_size: 'SIZE_LARGE',
-        with_audit: 'true',
-        share_channel: 'ALL',
-      });
-      if (pageToken) params.set('page_token', pageToken);
-      const resp = await apiRequest('GET', '/drive/v1/share?' + params.toString());
-      out.push.apply(out, resp.shares || []);
-      pageToken = resp.next_page_token || '';
-      if (out.length > 2000) break; // 防御性上限
+    const variants = [
+      { share_channel: 'ALL', limit: '100' },
+      { share_channel: 'ALL', limit: '100', thumbnail_size: 'SIZE_LARGE' },
+      { limit: '100' },
+      { parent_id: '0', limit: '100' },
+      {},
+    ];
+    let emptyFallback = null;
+    let lastErr = null;
+
+    for (const v of variants) {
+      try {
+        const out = [];
+        let pageToken = '';
+        let first = true;
+        while (first || pageToken) {
+          first = false;
+          const params = new URLSearchParams(v);
+          if (pageToken) params.set('page_token', pageToken);
+          const resp = await apiRequest('GET', '/drive/v1/share?' + params.toString());
+          console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','));
+          out.push.apply(out, resp.shares || []);
+          pageToken = resp.next_page_token || '';
+          if (out.length > 2000) break; // 防御性上限
+        }
+        if (out.length > 0) {
+          console.log('[PIKPAK助手] 分享列表可用参数：', JSON.stringify(v), '共', out.length, '条');
+          return out;
+        }
+        if (!emptyFallback) emptyFallback = out; // 请求成功但为空，作为最后兜底
+      } catch (e) {
+        lastErr = e;
+        console.log('[PIKPAK助手] 分享列表参数被拒：', JSON.stringify(v), '→', e.message);
+      }
     }
-    return out;
+
+    if (emptyFallback) return emptyFallback;
+    throw lastErr || new Error('无法获取分享列表（接口参数全部被拒）');
   }
 
   // 判断分享 file_list 里某项是否为文件夹
@@ -622,7 +644,8 @@
       setTimeout(function() { a.remove(); URL.revokeObjectURL(url); }, 1000);
       showExportStatus('已导出 ' + lines.length + ' 条分享（文件名--链接--总大小）');
     } catch (e) {
-      showExportStatus('导出失败：' + (e.message || String(e)));
+      console.log('[PIKPAK助手] 导出分享失败：', e);
+      showExportStatus('导出失败：' + (e.message || String(e)) + '\n（F12 控制台有详细日志）');
     } finally {
       ppExportRunning = false;
       if (btn) btn.classList.remove('pp-running');
