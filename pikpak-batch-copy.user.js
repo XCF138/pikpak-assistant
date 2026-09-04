@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.27.1
+// @version      1.27.2
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.27.1';
+  const SCRIPT_VERSION = '1.27.2';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -224,6 +224,19 @@
             if (cap && cap.length > 20) {
               pkCapturedCaptcha = { token: cap, at: Date.now() };
               try { localStorage.setItem('pp_batch_copy_captcha_token', JSON.stringify(pkCapturedCaptcha)); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        // 3. 捕获「我的分享」列表请求模板（用户在官方网页打开「我的分享」页面时触发）
+        //    排除查别人分享的接口（带 share_id=）和 detail/file_info/restore 等子路径
+        try {
+          if (url.includes('api-drive.mypikpak') && url.includes('/share')) {
+            const excluded = /\/share\/(detail|file_info|restore|bin)|share_id=/.test(url);
+            if (!excluded) {
+              window.__ppShareListUrl = url;
+              try { localStorage.setItem('pp_share_list_url', JSON.stringify({ url: url, at: Date.now() })); } catch (e) {}
+              console.log('[PIKPAK助手] 已捕获我的分享请求模板：', url);
             }
           }
         } catch (e) {}
@@ -522,48 +535,80 @@
     return total;
   }
 
-  // 拉取「我的分享」全量列表（自动翻页）
-  // 注意：不同区域/版本对这个接口的入参要求不一致（with_audit 之类多传就会报「请求参数错误」），
-  // 所以这里用多组参数依次降级重试，取第一个真正拿到数据的组合。
+  // 读取捕获的「我的分享」官方请求模板
+  function getCapturedShareListUrl() {
+    try {
+      if (window.__ppShareListUrl) return window.__ppShareListUrl;
+      const raw = localStorage.getItem('pp_share_list_url');
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (o && o.url) return o.url;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function splitPikpakUrl(u) {
+    const m = String(u).match(/^(https?:\/\/[^/]+)?(\/.*)$/);
+    if (!m) return { path: u, baseUrl: undefined };
+    return { baseUrl: m[1] || undefined, path: m[2] };
+  }
+
+  // 按模板 URL 翻页拉取分享列表（自动清理/追加 page_token）
+  async function pagedShareFetch(base) {
+    const out = [];
+    let pageToken = '';
+    let first = true;
+    while (first || pageToken) {
+      first = false;
+      let q = String(base).replace(/^https?:\/\/[^/]+/, '')
+        .replace(/([?&])page_token=[^&]*/g, '$1')
+        .replace(/\?&/, '?').replace(/&&+/g, '&').replace(/[?&]$/, '');
+      if (pageToken) q += (q.includes('?') ? '&' : '?') + 'page_token=' + encodeURIComponent(pageToken);
+      const { baseUrl, path } = splitPikpakUrl(q);
+      const resp = await apiRequest('GET', path, undefined, baseUrl ? { baseUrl: baseUrl } : undefined);
+      console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','));
+      const items = resp.shares || resp.share_list || resp.items || resp.files || [];
+      out.push.apply(out, items);
+      pageToken = resp.next_page_token || '';
+      if (out.length > 2000) break; // 防御性上限
+    }
+    return out;
+  }
+
+  // 拉取「我的分享」全量列表：
+  // 优先用捕获的官方请求模板（用户在网页上点开「我的分享」时自动记录），
+  // 没有模板再依次降级试常见参数组合；全部失败则提示用户先点一次官方「我的分享」页面。
   async function fetchMyShares() {
-    const variants = [
-      { share_channel: 'ALL', limit: '100' },
-      { share_channel: 'ALL', limit: '100', thumbnail_size: 'SIZE_LARGE' },
-      { limit: '100' },
-      { parent_id: '0', limit: '100' },
-      {},
-    ];
+    const captured = getCapturedShareListUrl();
+    const attempts = [];
+    if (captured) attempts.push({ label: '官方请求模板', base: captured });
+    attempts.push(
+      { label: 'share_channel=ALL', base: '/drive/v1/share?share_channel=ALL&limit=100' },
+      { label: 'share_channel=ALL+thumbnail', base: '/drive/v1/share?share_channel=ALL&limit=100&thumbnail_size=SIZE_LARGE' },
+      { label: 'limit only', base: '/drive/v1/share?limit=100' },
+      { label: 'parent_id=0', base: '/drive/v1/share?parent_id=0&limit=100' },
+      { label: 'no params', base: '/drive/v1/share' }
+    );
+
     let emptyFallback = null;
     let lastErr = null;
-
-    for (const v of variants) {
+    for (const at of attempts) {
       try {
-        const out = [];
-        let pageToken = '';
-        let first = true;
-        while (first || pageToken) {
-          first = false;
-          const params = new URLSearchParams(v);
-          if (pageToken) params.set('page_token', pageToken);
-          const resp = await apiRequest('GET', '/drive/v1/share?' + params.toString());
-          console.log('[PIKPAK助手] 分享列表响应字段：', Object.keys(resp || {}).join(','));
-          out.push.apply(out, resp.shares || []);
-          pageToken = resp.next_page_token || '';
-          if (out.length > 2000) break; // 防御性上限
-        }
+        const out = await pagedShareFetch(at.base);
         if (out.length > 0) {
-          console.log('[PIKPAK助手] 分享列表可用参数：', JSON.stringify(v), '共', out.length, '条');
+          console.log('[PIKPAK助手] 分享列表成功（', at.label, '），共', out.length, '条');
           return out;
         }
-        if (!emptyFallback) emptyFallback = out; // 请求成功但为空，作为最后兜底
+        if (!emptyFallback) emptyFallback = out; // 请求成功但为空，作最后兜底
       } catch (e) {
         lastErr = e;
-        console.log('[PIKPAK助手] 分享列表参数被拒：', JSON.stringify(v), '→', e.message);
+        console.log('[PIKPAK助手] 分享列表参数被拒（', at.label, '）→', e.message);
       }
     }
 
     if (emptyFallback) return emptyFallback;
-    throw lastErr || new Error('无法获取分享列表（接口参数全部被拒）');
+    throw new Error('无法获取分享列表。请先在 PikPak 左侧点开「我的分享」页面（让助手抓到官方请求），再回来点「导出分享」');
   }
 
   // 判断分享 file_list 里某项是否为文件夹
