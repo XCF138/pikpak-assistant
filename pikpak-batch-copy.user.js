@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.26.2
+// @version      1.27.0
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.26.2';
+  const SCRIPT_VERSION = '1.27.0';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -163,6 +163,23 @@
     .pp-quick-entry-txt {
       flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       font-weight: 500;
+    }
+    /* 导出分享入口：青绿色胶囊，与主入口区分 */
+    .pp-quick-entry.pp-export-wrap { margin-top: 6px; }
+    .pp-quick-entry-a.pp-export-entry {
+      background-color: #0fbf8f !important;
+      height: 40px;
+    }
+    .pp-quick-entry-a.pp-export-entry:hover { background-color: #0ca87e !important; }
+    .pp-quick-entry-a.pp-export-entry:active { background-color: #09936e !important; }
+    .pp-quick-entry-a.pp-export-entry.pp-running { opacity: .6; pointer-events: none; }
+    /* 导出进度提示（右下角 toast） */
+    .pp-export-toast {
+      position: fixed; right: 18px; bottom: 18px; z-index: 999999;
+      max-width: 360px; padding: 10px 14px; border-radius: 8px;
+      background: rgba(20, 24, 34, .92); color: #fff;
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      box-shadow: 0 4px 16px rgba(0,0,0,.25);
     }
   `;
 
@@ -484,6 +501,132 @@
       ids: ids,
       to: { parent_id: destFolderId },
     });
+  }
+
+  /* ---------------- 我的分享导出 ---------------- */
+
+  // 分享文件夹大小缓存（同一文件夹/公共子目录不重复遍历）
+  const ppShareSizeCache = new Map();
+
+  // 递归统计自己网盘里某个文件夹的总大小（用于分享里的文件夹项；分享项的 id 即自己网盘的文件 id）
+  async function sumDriveFolderSize(folderId, depth) {
+    if (ppShareSizeCache.has(folderId)) return ppShareSizeCache.get(folderId);
+    if (depth > 8) return 0; // 防御性深度上限
+    let total = 0;
+    try {
+      const { folders, files } = await listFiles(folderId);
+      for (const f of files) total += parseInt(f.size || 0);
+      for (const fo of folders) total += await sumDriveFolderSize(fo.id, depth + 1);
+    } catch (e) { /* 单个子文件夹失败不影响整体 */ }
+    ppShareSizeCache.set(folderId, total);
+    return total;
+  }
+
+  // 拉取「我的分享」全量列表（自动翻页）
+  async function fetchMyShares() {
+    const out = [];
+    let pageToken = '';
+    let first = true;
+    while (first || pageToken) {
+      first = false;
+      const params = new URLSearchParams({
+        limit: '100',
+        thumbnail_size: 'SIZE_LARGE',
+        with_audit: 'true',
+        share_channel: 'ALL',
+      });
+      if (pageToken) params.set('page_token', pageToken);
+      const resp = await apiRequest('GET', '/drive/v1/share?' + params.toString());
+      out.push.apply(out, resp.shares || []);
+      pageToken = resp.next_page_token || '';
+      if (out.length > 2000) break; // 防御性上限
+    }
+    return out;
+  }
+
+  // 判断分享 file_list 里某项是否为文件夹
+  function isShareItemFolder(f) {
+    if (f.kind === 'drive#folder') return true;
+    if (f.folder_type) return true;
+    // 没有 mime 也没有 size 的项按文件夹兜底处理
+    return !f.mime_type && f.size === undefined && f.file_size === undefined;
+  }
+
+  // 单条分享的总大小：文件项直接取 size；文件夹项走自己网盘递归统计
+  async function computeShareTotalSize(share) {
+    const items = share.file_list || share.fileList || [];
+    let total = 0;
+    for (const f of items) {
+      if (isShareItemFolder(f)) {
+        if (f.id) total += await sumDriveFolderSize(f.id, 0);
+      } else {
+        total += parseInt(f.size || f.file_size || 0);
+      }
+    }
+    return total;
+  }
+
+  // 右下角 toast 提示
+  let ppExportToast = null;
+  function showExportStatus(text, sticky) {
+    if (!ppExportToast || !ppExportToast.isConnected) {
+      ppExportToast = document.createElement('div');
+      ppExportToast.className = 'pp-export-toast';
+      document.body.appendChild(ppExportToast);
+    }
+    ppExportToast.textContent = text;
+    ppExportToast.style.display = 'block';
+    if (!sticky) {
+      clearTimeout(showExportStatus._t);
+      showExportStatus._t = setTimeout(function() {
+        if (ppExportToast) ppExportToast.style.display = 'none';
+      }, 4000);
+    }
+  }
+
+  // 导出我的分享：每行「文件名--链接--总大小」，输出 txt 下载
+  let ppExportRunning = false;
+  async function exportMyShares() {
+    if (ppExportRunning) return;
+    ppExportRunning = true;
+    const btn = document.querySelector('#pp-share-export-entry .pp-quick-entry-a');
+    if (btn) btn.classList.add('pp-running');
+    try {
+      showExportStatus('正在获取分享列表…', true);
+      const shares = await fetchMyShares();
+      if (!shares.length) {
+        showExportStatus('没有找到任何分享记录');
+        return;
+      }
+      const lines = [];
+      for (let i = 0; i < shares.length; i++) {
+        const s = shares[i];
+        const name = String(s.name || '').trim() || '未命名分享';
+        showExportStatus('正在统计大小 ' + (i + 1) + '/' + shares.length + '：' + name, true);
+        let sizeStr = '';
+        try {
+          sizeStr = fmtSize(await computeShareTotalSize(s));
+        } catch (e) { sizeStr = '未知'; }
+        lines.push(name + '--' + (s.share_url || '') + '--' + sizeStr);
+      }
+      const d = new Date();
+      const pad = function(n) { return (n < 10 ? '0' : '') + n; };
+      const dateStr = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate());
+      const blob = new Blob(['\ufeff' + lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '我的分享_' + dateStr + '.txt';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() { a.remove(); URL.revokeObjectURL(url); }, 1000);
+      showExportStatus('已导出 ' + lines.length + ' 条分享（文件名--链接--总大小）');
+    } catch (e) {
+      showExportStatus('导出失败：' + (e.message || String(e)));
+    } finally {
+      ppExportRunning = false;
+      if (btn) btn.classList.remove('pp-running');
+    }
   }
 
   // 批量移到回收站（安全，可恢复）
@@ -3983,6 +4126,24 @@
     return nav;
   }
 
+  // 「导出分享」入口：青绿色胶囊，点击后把我的分享导出为 txt（文件名--链接--总大小）
+  function buildExportEntryContent() {
+    const a = document.createElement('a');
+    a.className = 'pp-quick-entry-a pp-export-entry';
+    a.href = 'javascript:void(0)';
+    a.title = '导出我的分享：每行「文件名--链接--总大小」，保存为 txt';
+    const shareSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff" aria-hidden="true">' +
+      '<path d="M18 16.1c-.8 0-1.5.3-2 .8l-7.1-4.2c.1-.2.1-.5.1-.7s0-.5-.1-.7L16 7.2c.5.5 1.2.8 2 .8 1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3c0 .2 0 .5.1.7L8 9.8C7.5 9.3 6.8 9 6 9c-1.7 0-3 1.3-3 3s1.3 3 3 3c.8 0 1.5-.3 2-.8l7.1 4.2c-.1.2-.1.4-.1.6 0 1.7 1.3 3 3 3s3-1.3 3-3-1.3-2.9-3-2.9z"/></svg>';
+    a.innerHTML =
+      '<span class="pp-quick-entry-ico">' + shareSvg + '</span>' +
+      '<span class="pp-quick-entry-txt">导出分享</span>';
+    a.addEventListener('click', function(e) {
+      e.preventDefault();
+      exportMyShares();
+    });
+    return a;
+  }
+
   function injectSidebarEntry() {
     if (document.getElementById('pikpak-assistant-entry')) return true;
     const nav = findSidebarContainer();
@@ -4005,6 +4166,19 @@
       else nav.appendChild(wrap);
     } else {
       nav.appendChild(wrap);
+    }
+
+    // 导出分享入口：紧跟 PIKPAK 助手入口之后
+    try {
+      if (!document.getElementById('pp-share-export-entry')) {
+        const exportWrap = document.createElement('div');
+        exportWrap.id = 'pp-share-export-entry';
+        exportWrap.className = 'pp-quick-entry pp-export-wrap';
+        exportWrap.appendChild(buildExportEntryContent());
+        nav.insertBefore(exportWrap, wrap.nextSibling);
+      }
+    } catch (e) {
+      console.log('[PIKPAK助手] 导出分享入口注入失败', e);
     }
 
     console.log('[PIKPAK助手] 入口已注入到侧边栏', nav.tagName, nav.className);
