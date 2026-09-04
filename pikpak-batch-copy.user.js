@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.28.0
+// @version      1.28.1
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.28.0';
+  const SCRIPT_VERSION = '1.28.1';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -622,9 +622,10 @@
             console.log('[PIKPAK助手] 分享项示例字段：', Object.keys(out[0]));
             console.log('[PIKPAK助手] 分享项示例（脱敏摘要）：', {
               name: getShareName(out[0]), url: getShareUrl(out[0]),
-              share_id: out[0].share_id, id: out[0].id,
-              size: out[0].size, total_size: out[0].total_size,
-              kind: out[0].kind, type: out[0].type,
+              share_id: out[0].share_id, id: out[0].id, file_id: out[0].file_id,
+              size: out[0].size, total_size: out[0].total_size, file_size: out[0].file_size,
+              kind: out[0].kind, file_kind: out[0].file_kind, type: out[0].type,
+              file_num: out[0].file_num,
               file_list_len: (out[0].file_list || out[0].fileList || out[0].files || []).length
             });
           }
@@ -644,7 +645,7 @@
   // 判断分享 file_list 里某项是否为文件夹
   function isShareItemFolder(f) {
     if (!f) return false;
-    if (f.kind === 'drive#folder') return true;
+    if (f.kind === 'drive#folder' || f.file_kind === 'drive#folder') return true;
     if (f.type === 'folder' || f.folder_type) return true;
     // 没有 mime 也没有 size 的项按文件夹兜底处理
     return !f.mime_type && f.size === undefined && f.file_size === undefined;
@@ -668,6 +669,22 @@
   async function computeShareTotalSize(share) {
     const directSize = share.size || share.total_size || share.share_size || share.file_size;
     if (directSize && !isNaN(parseInt(directSize))) return parseInt(directSize);
+
+    // 分享项本身就是单个文件/文件夹：用 file_id 去查或递归统计
+    const fileId = share.file_id || share.id || share.fileId || '';
+    if (fileId) {
+      if (isShareItemFolder(share)) {
+        try { return await sumDriveFolderSize(fileId, 0); } catch (e) {}
+      } else {
+        try {
+          const info = await getFileInfo(fileId);
+          const sz = info.size || info.file_size || info.total_size;
+          if (sz) return parseInt(sz);
+        } catch (e) {}
+      }
+    }
+
+    // 兜底：遍历 file_list 数组（旧接口结构）
     const items = share.file_list || share.fileList || share.files || [];
     if (!Array.isArray(items) || items.length === 0) return 0;
     let total = 0;
