@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.27.2
+// @version      1.27.3
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.27.2';
+  const SCRIPT_VERSION = '1.27.3';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -229,19 +229,20 @@
         } catch (e) {}
 
         // 3. 捕获「我的分享」列表请求模板（用户在官方网页打开「我的分享」页面时触发）
+        //    只在响应成功（res.ok）时保存，避免把我们自己降级重试的 400 请求也存成模板；
         //    排除查别人分享的接口（带 share_id=）和 detail/file_info/restore 等子路径
+        const res = await originalFetch.apply(this, arguments);
         try {
           if (url.includes('api-drive.mypikpak') && url.includes('/share')) {
             const excluded = /\/share\/(detail|file_info|restore|bin)|share_id=/.test(url);
-            if (!excluded) {
+            if (!excluded && res && res.ok) {
               window.__ppShareListUrl = url;
               try { localStorage.setItem('pp_share_list_url', JSON.stringify({ url: url, at: Date.now() })); } catch (e) {}
               console.log('[PIKPAK助手] 已捕获我的分享请求模板：', url);
             }
           }
         } catch (e) {}
-
-        return originalFetch.apply(this, arguments);
+        return res;
       };
       window.fetch.__pp_hooked = true;
     } catch (e) {}
@@ -577,18 +578,18 @@
   }
 
   // 拉取「我的分享」全量列表：
-  // 优先用捕获的官方请求模板（用户在网页上点开「我的分享」时自动记录），
-  // 没有模板再依次降级试常见参数组合；全部失败则提示用户先点一次官方「我的分享」页面。
+  // 正确路径是 /drive/v1/share/list（用户 Console 已确认）；/drive/v1/share 是查别人分享详情的接口，必 400。
+  // 优先用捕获的官方请求模板，其次 share/list 常见参数，最后才是旧路径兜底。
   async function fetchMyShares() {
     const captured = getCapturedShareListUrl();
     const attempts = [];
     if (captured) attempts.push({ label: '官方请求模板', base: captured });
     attempts.push(
-      { label: 'share_channel=ALL', base: '/drive/v1/share?share_channel=ALL&limit=100' },
-      { label: 'share_channel=ALL+thumbnail', base: '/drive/v1/share?share_channel=ALL&limit=100&thumbnail_size=SIZE_LARGE' },
-      { label: 'limit only', base: '/drive/v1/share?limit=100' },
-      { label: 'parent_id=0', base: '/drive/v1/share?parent_id=0&limit=100' },
-      { label: 'no params', base: '/drive/v1/share' }
+      { label: 'share/list 标准参数', base: '/drive/v1/share/list?limit=100&thumbnail_size=SIZE_LARGE' },
+      { label: 'share/list+channel', base: '/drive/v1/share/list?share_channel=ALL&limit=100&thumbnail_size=SIZE_LARGE' },
+      { label: 'share/list 仅limit', base: '/drive/v1/share/list?limit=100' },
+      { label: '旧路径 share_channel=ALL', base: '/drive/v1/share?share_channel=ALL&limit=100' },
+      { label: '旧路径 仅limit', base: '/drive/v1/share?limit=100' }
     );
 
     let emptyFallback = null;
