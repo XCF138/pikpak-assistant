@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.28.1
+// @version      1.28.2
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -73,7 +73,7 @@
   const CLIENT_SECRET = 'dbw2OtmVEeuUvIptb1Coyg';
 
   // 当前脚本版本（与 @version 保持一致）
-  const SCRIPT_VERSION = '1.28.1';
+  const SCRIPT_VERSION = '1.28.2';
   // 脚本远程 raw URL（用于更新检查）
   const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/XCF138/pikpak-assistant/main/pikpak-batch-copy.user.js';
 
@@ -665,10 +665,12 @@
     return '';
   }
 
-  // 单条分享的总大小：优先用分享项自带字段；文件夹项递归统计自己网盘
+  // 单条分享的总大小：文件直接用自带 size；文件夹必须递归统计网盘内真实大小
   async function computeShareTotalSize(share) {
     const directSize = share.size || share.total_size || share.share_size || share.file_size;
-    if (directSize && !isNaN(parseInt(directSize))) return parseInt(directSize);
+    const numericDirect = directSize ? parseInt(directSize) : 0;
+    // 不是文件夹且自带有效 size → 直接返回
+    if (numericDirect > 0 && !isShareItemFolder(share)) return numericDirect;
 
     // 分享项本身就是单个文件/文件夹：用 file_id 去查或递归统计
     const fileId = share.file_id || share.id || share.fileId || '';
