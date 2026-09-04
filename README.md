@@ -36,6 +36,10 @@ PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到
 
 ## 更新日志
 
+### v1.28.5（2026-09-04）
+- **修复**：分享代码全部显示「无」。真实字段名是 `pass_code`（不是 `passcode`/`share_code`/`code`），已在 `getShareCode()` 里优先兜底。
+- 诊断日志的分享项摘要也补上 `pass_code` 字段。
+
 ### v1.28.4（2026-09-04）
 - **优化**：「我的分享」导出第三列不再显示文件大小/文件数，改为显示 **分享代码**（PikPak 的自定义口令/提取码）。
 - 新增 `getShareCode()` 按 `share_code / code / passcode / share_pwd / password` 等多个候选字段名读取；没有分享代码时显示 `无`。
