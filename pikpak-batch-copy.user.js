@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PIKPAK助手
 // @namespace    workbuddy.pikpak.batchcopy
-// @version      1.28.3
+// @version      1.28.4
 // @description  PIKPAK助手（油猴脚本）：把常用的 PikPak 网盘整理操作集中到一个横屏、可拖动、可全屏的悬浮工作台里。① 批量复制/移动文件到多个文件夹（含全选/反选、按路径自动创建）；② 文件整理（移到回收站、批量解压）；③ 文件查重（精准匹配+视频时长相似+名称相似，可勾选具体子文件夹限定扫描范围、递归子文件夹、相似阈值，可搜索筛选）；④ 导出文件夹目录树（TXT / PNG 图片）；⑤ 批量重命名（按括号 / 关键字 / 位置删除，可加序号，预览确认后执行）。横屏布局，支持全屏/窗口切换，悬浮窗可拖动、可缩放。直接使用网页登录状态，无需配置账号密码。
 // @author       XCF138
 // @homepageURL  https://github.com/XCF138/pikpak-assistant
@@ -626,6 +626,8 @@
               size: out[0].size, total_size: out[0].total_size, file_size: out[0].file_size,
               kind: out[0].kind, file_kind: out[0].file_kind, type: out[0].type,
               file_num: out[0].file_num,
+              share_code: out[0].share_code, code: out[0].code,
+              passcode: out[0].passcode, share_pwd: out[0].share_pwd, password: out[0].password,
               file_list_len: (out[0].file_list || out[0].fileList || out[0].files || []).length
             });
           }
@@ -665,23 +667,17 @@
     return '';
   }
 
-  // 单条分享的大小：尽量用 API 直接给出的字段，不递归扫描网盘（大文件夹会非常慢）
-  async function computeShareTotalSize(share) {
-    const directSize = share.size || share.total_size || share.share_size || share.file_size;
-    const numericDirect = directSize ? parseInt(directSize) : 0;
-    // 文件且自带有效 size → 直接返回（无需任何 API 调用）
-    if (numericDirect > 0 && !isShareItemFolder(share)) return numericDirect;
-    // 文件夹或 size 为 0：不递归统计（避免转圈圈），返回 0，由调用方退回 file_num
-    return 0;
+  // 从分享项对象里取出分享代码（自定义口令/提取码），按常见字段名兜底
+  function getShareCode(share) {
+    if (!share) return '';
+    const code = share.share_code || share.code || share.passcode || share.share_pwd || share.password || '';
+    return String(code).trim();
   }
 
-  // 分享项第三列：有真实大小就显示大小，否则退回「文件数」(file_num，API 直接给、零成本)
-  async function getShareSizeLabel(share) {
-    const sz = await computeShareTotalSize(share);
-    if (sz > 0) return fmtSize(sz);
-    const fn = share.file_num;
-    if (fn !== undefined && fn !== null && fn !== '') return fn + ' 个文件';
-    return '—';
+  // 分享项第三列：直接显示分享代码（PikPak 的「分享代码」字段）；没有就显示「无」
+  function getShareCodeLabel(share) {
+    const code = getShareCode(share);
+    return code || '无';
   }
 
   // 批量移到回收站（安全，可恢复）
@@ -871,7 +867,7 @@
     }
   }
 
-  // 导出目录树面板里勾选的分享项（name--url--size）
+  // 导出目录树面板里勾选的分享项（name--url--share_code）
   async function exportSelectedShares() {
     const pickedShares = [];
     for (const sel of state.treeFolders) {
@@ -893,11 +889,8 @@
         const s = pickedShares[i];
         const name = getShareName(s) || '未命名分享';
         statusEl.textContent = '正在处理 ' + (i + 1) + '/' + pickedShares.length + '：' + name;
-        let sizeStr = '';
-        try {
-          sizeStr = await getShareSizeLabel(s);
-        } catch (e) { sizeStr = '—'; }
-        lines.push(name + '--' + getShareUrl(s) + '--' + sizeStr);
+        const codeStr = getShareCodeLabel(s);
+        lines.push(name + '--' + getShareUrl(s) + '--' + codeStr);
       }
       const ts = new Date();
       const p = (x) => String(x).padStart(2, '0');
@@ -3837,7 +3830,7 @@
       if (state.treeSource === 'shares') {
         ui.treeDepth.parentElement.classList.add('hidden');
         ui.treeFormat.parentElement.classList.add('hidden');
-        ui.treeNote.textContent = '勾选要导出的分享，每行输出「名字--链接--大小/文件数」';
+        ui.treeNote.textContent = '勾选要导出的分享，每行输出「名字--链接--分享代码」';
         loadTreeShares();
       } else {
         ui.treeDepth.parentElement.classList.remove('hidden');
